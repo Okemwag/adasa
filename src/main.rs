@@ -7,9 +7,11 @@ mod process;
 mod state;
 
 use cli::Cli;
-use error::Result;
 
-fn main() -> Result<()> {
+fn main() {
     // Initialize CLI and execute command
-    Cli::run()
+    if let Err(e) = Cli::run() {
+        eprintln!("✗ Error: {}", e);
+        std::process::exit(1);
+    }
 }
