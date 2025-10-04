@@ -1,0 +1,17 @@
+# Example single process configuration with environment variable expansion
+
+name = "my-app"
+script = "$HOME/apps/myapp/start.sh"
+args = ["--config=${CONFIG_PATH}"]
+cwd = "$HOME/apps/myapp"
+instances = 1
+autorestart = true
+max_restarts = 10
+restart_delay_secs = 3
+stop_signal = "SIGTERM"
+stop_timeout_secs = 15
+
+[env]
+APP_ENV = "production"
+LOG_DIR = "$HOME/logs"
+DATA_DIR = "${HOME}/data"

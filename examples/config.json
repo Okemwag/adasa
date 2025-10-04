@@ -1,0 +1,37 @@
+{
+  "processes": [
+    {
+      "name": "api-server",
+      "script": "/usr/bin/node",
+      "args": ["api.js"],
+      "cwd": "/var/www/api",
+      "instances": 2,
+      "autorestart": true,
+      "max_restarts": 10,
+      "restart_delay_secs": 1,
+      "stop_signal": "SIGTERM",
+      "stop_timeout_secs": 10,
+      "env": {
+        "NODE_ENV": "production",
+        "API_PORT": "8080"
+      }
+    },
+    {
+      "name": "background-job",
+      "script": "/usr/bin/python3",
+      "args": ["job.py", "--interval=60"],
+      "cwd": "/var/www/jobs",
+      "instances": 1,
+      "autorestart": true,
+      "max_restarts": 5,
+      "restart_delay_secs": 10,
+      "max_memory": 268435456,
+      "stop_signal": "SIGINT",
+      "stop_timeout_secs": 30,
+      "env": {
+        "PYTHON_ENV": "production",
+        "LOG_LEVEL": "info"
+      }
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+# Example TOML configuration for Adasa process manager
+
+[[processes]]
+name = "web-server"
+script = "/usr/bin/node"
+args = ["server.js", "--port=3000"]
+cwd = "/var/www/app"
+instances = 4
+autorestart = true
+max_restarts = 10
+restart_delay_secs = 2
+stop_signal = "SIGTERM"
+stop_timeout_secs = 10
+
+[processes.env]
+NODE_ENV = "production"
+PORT = "3000"
+
+[[processes]]
+name = "worker"
+script = "/usr/bin/python3"
+args = ["worker.py"]
+cwd = "/var/www/app"
+instances = 2
+autorestart = true
+max_restarts = 5
+restart_delay_secs = 5
+max_memory = 536870912  # 512MB in bytes
+stop_signal = "SIGTERM"
+stop_timeout_secs = 30
+
+[processes.env]
+PYTHON_ENV = "production"
+WORKER_THREADS = "4"
