@@ -83,21 +83,20 @@ impl IpcClient {
         })?;
 
         // Write request with newline delimiter
-        writeln!(stream, "{}", request_json).map_err(|e| {
-            AdasaError::IpcError(format!("Failed to write request: {}", e))
-        })?;
+        writeln!(stream, "{}", request_json)
+            .map_err(|e| AdasaError::IpcError(format!("Failed to write request: {}", e)))?;
 
         // Flush to ensure data is sent
-        stream.flush().map_err(|e| {
-            AdasaError::IpcError(format!("Failed to flush stream: {}", e))
-        })?;
+        stream
+            .flush()
+            .map_err(|e| AdasaError::IpcError(format!("Failed to flush stream: {}", e)))?;
 
         // Read the response
         let mut reader = BufReader::new(stream);
         let mut response_line = String::new();
-        reader.read_line(&mut response_line).map_err(|e| {
-            AdasaError::IpcError(format!("Failed to read response: {}", e))
-        })?;
+        reader
+            .read_line(&mut response_line)
+            .map_err(|e| AdasaError::IpcError(format!("Failed to read response: {}", e)))?;
 
         // Deserialize the response
         let response: Response = serde_json::from_str(&response_line).map_err(|e| {

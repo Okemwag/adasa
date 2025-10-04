@@ -8,7 +8,7 @@ fn test_client_daemon_not_running() {
     // Test that client properly handles daemon not running
     let client = IpcClient::with_socket_path("/tmp/test_adasa_nonexistent.sock");
     let result = client.send_command(Command::List);
-    
+
     assert!(result.is_err());
     match result.unwrap_err() {
         AdasaError::DaemonNotRunning => {

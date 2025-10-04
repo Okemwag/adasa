@@ -216,10 +216,7 @@ mod tests {
 
     #[test]
     fn test_parse_env_vars() {
-        let env_vars = vec![
-            "NODE_ENV=production".to_string(),
-            "PORT=3000".to_string(),
-        ];
+        let env_vars = vec!["NODE_ENV=production".to_string(), "PORT=3000".to_string()];
         let result = parse_env_vars(&env_vars).unwrap();
         assert_eq!(result.get("NODE_ENV"), Some(&"production".to_string()));
         assert_eq!(result.get("PORT"), Some(&"3000".to_string()));

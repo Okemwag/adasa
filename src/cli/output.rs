@@ -98,12 +98,12 @@ fn print_process_table(processes: &[ProcessInfo]) {
 /// Format a process state with color coding
 fn format_state(state: &ProcessState) -> String {
     match state {
-        ProcessState::Running => format!("\x1b[32m{}\x1b[0m", state),      // Green
-        ProcessState::Starting => format!("\x1b[33m{}\x1b[0m", state),     // Yellow
-        ProcessState::Restarting => format!("\x1b[33m{}\x1b[0m", state),   // Yellow
-        ProcessState::Stopping => format!("\x1b[33m{}\x1b[0m", state),     // Yellow
-        ProcessState::Stopped => format!("\x1b[90m{}\x1b[0m", state),      // Gray
-        ProcessState::Errored => format!("\x1b[31m{}\x1b[0m", state),      // Red
+        ProcessState::Running => format!("\x1b[32m{}\x1b[0m", state), // Green
+        ProcessState::Starting => format!("\x1b[33m{}\x1b[0m", state), // Yellow
+        ProcessState::Restarting => format!("\x1b[33m{}\x1b[0m", state), // Yellow
+        ProcessState::Stopping => format!("\x1b[33m{}\x1b[0m", state), // Yellow
+        ProcessState::Stopped => format!("\x1b[90m{}\x1b[0m", state), // Gray
+        ProcessState::Errored => format!("\x1b[31m{}\x1b[0m", state), // Red
     }
 }
 

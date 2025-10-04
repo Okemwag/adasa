@@ -1,7 +1,7 @@
 // Process module - Core process lifecycle management
 
-pub mod spawner;
 mod manager;
+pub mod spawner;
 
+pub use manager::{ManagedProcess, ProcessId, ProcessManager, ProcessState, ProcessStats};
 pub use spawner::{spawn_process, SpawnedProcess};
-pub use manager::{ProcessManager, ProcessId, ProcessState, ManagedProcess, ProcessStats};

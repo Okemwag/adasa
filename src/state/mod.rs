@@ -109,9 +109,8 @@ impl StateStore {
         }
 
         // Open and read the file
-        let file = File::open(&self.path).map_err(|e| {
-            AdasaError::StateLoadError(format!("Failed to open state file: {}", e))
-        })?;
+        let file = File::open(&self.path)
+            .map_err(|e| AdasaError::StateLoadError(format!("Failed to open state file: {}", e)))?;
 
         let reader = BufReader::new(file);
 
@@ -236,7 +235,10 @@ mod tests {
 
         let result = state.validate();
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AdasaError::StateCorruption(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            AdasaError::StateCorruption(_)
+        ));
     }
 
     #[test]
@@ -247,7 +249,10 @@ mod tests {
 
         let result = state.validate();
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AdasaError::StateCorruption(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            AdasaError::StateCorruption(_)
+        ));
     }
 
     #[test]
@@ -257,7 +262,10 @@ mod tests {
 
         let result = state.validate();
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AdasaError::StateCorruption(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            AdasaError::StateCorruption(_)
+        ));
     }
 
     #[test]

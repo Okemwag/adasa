@@ -7,13 +7,13 @@ use std::path::PathBuf;
 #[test]
 fn test_request_serialization() {
     let req = Request::new(1, Command::List);
-    
+
     // Serialize to JSON
     let json = serde_json::to_string(&req).expect("Failed to serialize request");
-    
+
     // Deserialize back
     let deserialized: Request = serde_json::from_str(&json).expect("Failed to deserialize request");
-    
+
     assert_eq!(req.id, deserialized.id);
 }
 
@@ -27,9 +27,9 @@ fn test_start_command_serialization() {
         cwd: Some(PathBuf::from("/app")),
         args: vec!["server.js".to_string()],
     };
-    
+
     let req = Request::new(1, Command::Start(start_opts));
-    
+
     // Serialize and deserialize
     let json = serde_json::to_string(&req).expect("Failed to serialize");
     let _deserialized: Request = serde_json::from_str(&json).expect("Failed to deserialize");
@@ -44,11 +44,11 @@ fn test_response_serialization() {
             name: "test-process".to_string(),
         },
     );
-    
+
     // Serialize and deserialize
     let json = serde_json::to_string(&response).expect("Failed to serialize");
     let deserialized: Response = serde_json::from_str(&json).expect("Failed to deserialize");
-    
+
     assert_eq!(response.id, deserialized.id);
     assert!(deserialized.result.is_ok());
 }
