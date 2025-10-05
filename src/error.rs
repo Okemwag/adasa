@@ -23,6 +23,9 @@ pub enum AdasaError {
     #[error("Process restart limit exceeded for {0}")]
     RestartLimitExceeded(String),
 
+    #[error("Failed to restart process {0}: {1}")]
+    RestartError(String, String),
+
     // IPC-related errors
     #[error("IPC error: {0}")]
     IpcError(String),

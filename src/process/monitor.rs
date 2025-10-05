@@ -152,7 +152,8 @@ impl Default for ProcessMonitor {
 mod tests {
     use super::*;
     use crate::config::ProcessConfig;
-    use crate::process::{ProcessId, ProcessStats};
+    use crate::ipc::protocol::ProcessId;
+    use crate::process::ProcessStats;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use tokio::process::Command;

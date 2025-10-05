@@ -1,5 +1,6 @@
 use crate::error::{AdasaError, Result};
-use crate::process::{ProcessId, ProcessManager, ProcessState};
+use crate::ipc::protocol::ProcessId;
+use crate::process::{ProcessManager, ProcessState};
 use std::collections::HashSet;
 use std::time::Duration;
 use tokio::time::sleep;

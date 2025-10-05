@@ -94,7 +94,10 @@ pub struct StopOptions {
 /// Options for restarting a process
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RestartOptions {
-    pub id: ProcessId,
+    /// Process ID or name to restart
+    pub target: String,
+    /// If true, restart instances sequentially with health checks (for multi-instance processes)
+    pub rolling: bool,
 }
 
 /// Options for viewing logs

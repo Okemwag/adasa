@@ -6,7 +6,7 @@ pub mod restart;
 pub mod spawner;
 pub mod supervisor;
 
-pub use manager::{ManagedProcess, ProcessId, ProcessManager, ProcessState, ProcessStats};
+pub use manager::{ManagedProcess, ProcessManager, ProcessState, ProcessStats};
 pub use monitor::ProcessMonitor;
 pub use restart::{BackoffStrategy, RestartPolicy, RestartTracker};
 pub use spawner::{spawn_process, SpawnedProcess};

@@ -1,5 +1,6 @@
 use crate::config::ProcessConfig;
 use crate::error::{AdasaError, Result};
+use crate::ipc::protocol::ProcessId;
 use crate::process::monitor::ProcessMonitor;
 use crate::process::restart::{RestartPolicy, RestartTracker};
 use crate::process::spawner::{spawn_process, SpawnedProcess};
@@ -9,28 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use tokio::process::Child;
-
-/// Unique identifier for a managed process
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ProcessId(u64);
-
-impl ProcessId {
-    /// Create a new ProcessId
-    pub fn new(id: u64) -> Self {
-        Self(id)
-    }
-
-    /// Get the inner u64 value
-    pub fn as_u64(&self) -> u64 {
-        self.0
-    }
-}
-
-impl std::fmt::Display for ProcessId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 /// Process state in the lifecycle
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -505,6 +484,99 @@ impl ProcessManager {
             let should_restart = p.restart_policy.should_restart(&p.restart_tracker);
             (count, should_restart)
         })
+    }
+
+    /// Perform a rolling restart of all instances with a given name prefix
+    ///
+    /// This restarts instances sequentially with health checks between each restart
+    /// to maintain availability during the restart process.
+    ///
+    /// # Arguments
+    /// * `name_or_id` - Process name or ID to restart
+    /// * `health_check_delay` - Duration to wait after each restart for health check
+    ///
+    /// # Returns
+    /// * `Ok(usize)` - Number of instances restarted
+    /// * `Err(AdasaError)` - Failed to perform rolling restart
+    pub async fn rolling_restart(
+        &mut self,
+        name_or_id: &str,
+        health_check_delay: Duration,
+    ) -> Result<usize> {
+        // Try to parse as ProcessId first
+        let instances: Vec<ProcessId> = if let Ok(id_num) = name_or_id.parse::<u64>() {
+            let id = ProcessId::new(id_num);
+            // Check if this is a multi-instance process by looking for related instances
+            if let Some(process) = self.processes.get(&id) {
+                let base_name = &process.name;
+                // Find all instances with the same base name
+                self.find_all_by_name(base_name)
+                    .iter()
+                    .map(|p| p.id)
+                    .collect()
+            } else {
+                return Err(AdasaError::ProcessNotFound(name_or_id.to_string()));
+            }
+        } else {
+            // Treat as name - find all instances
+            self.find_all_by_name(name_or_id)
+                .iter()
+                .map(|p| p.id)
+                .collect()
+        };
+
+        if instances.is_empty() {
+            return Err(AdasaError::ProcessNotFound(name_or_id.to_string()));
+        }
+
+        // If only one instance, just do a regular restart
+        if instances.len() == 1 {
+            self.restart(instances[0]).await?;
+            return Ok(1);
+        }
+
+        // Perform rolling restart - restart each instance sequentially
+        let mut restarted_count = 0;
+
+        for (idx, instance_id) in instances.iter().enumerate() {
+            println!(
+                "Rolling restart: restarting instance {} of {} (ID: {})",
+                idx + 1,
+                instances.len(),
+                instance_id
+            );
+
+            // Restart this instance
+            self.restart(*instance_id).await?;
+
+            // Wait for health check delay (except for the last instance)
+            if idx < instances.len() - 1 {
+                println!(
+                    "Waiting {:?} for health check before restarting next instance...",
+                    health_check_delay
+                );
+                tokio::time::sleep(health_check_delay).await;
+
+                // Verify the restarted instance is still alive
+                if !self.is_alive(*instance_id) {
+                    return Err(AdasaError::RestartError(
+                        instance_id.to_string(),
+                        "Instance failed health check after restart".to_string(),
+                    ));
+                }
+
+                println!("Health check passed for instance {}", instance_id);
+            }
+
+            restarted_count += 1;
+        }
+
+        println!(
+            "Rolling restart completed: {} instances restarted successfully",
+            restarted_count
+        );
+
+        Ok(restarted_count)
     }
 }
 
@@ -1040,5 +1112,163 @@ mod tests {
 
         // Cleanup
         let _ = manager.stop(id, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_rolling_restart_single_instance() {
+        let mut manager = ProcessManager::new();
+        let config = create_test_config("single-instance");
+
+        let id = manager.spawn(config).await.unwrap();
+        let initial_pid = manager.get_status(id).unwrap().stats.pid;
+
+        // Rolling restart with single instance should work like regular restart
+        let health_check_delay = Duration::from_millis(100);
+        let result = manager.rolling_restart("single-instance", health_check_delay).await;
+        
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+
+        // Verify process was restarted
+        let process = manager.get_status(id).unwrap();
+        assert_ne!(process.stats.pid, initial_pid);
+        assert_eq!(process.stats.restarts, 1);
+
+        // Cleanup
+        let _ = manager.stop(id, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_rolling_restart_multiple_instances() {
+        let mut manager = ProcessManager::new();
+
+        // Spawn multiple instances with the same base name
+        let mut instance_ids = Vec::new();
+        for i in 0..3 {
+            let config = ProcessConfig {
+                name: format!("multi-app-{}", i),
+                script: PathBuf::from("/bin/sleep"),
+                args: vec!["10".to_string()],
+                cwd: None,
+                env: HashMap::new(),
+                instances: 1,
+                autorestart: true,
+                max_restarts: 10,
+                restart_delay_secs: 1,
+                max_memory: None,
+                stop_signal: "SIGTERM".to_string(),
+                stop_timeout_secs: 2,
+            };
+
+            let id = manager.spawn(config).await.unwrap();
+            instance_ids.push(id);
+        }
+
+        // Get initial PIDs
+        let initial_pids: Vec<u32> = instance_ids
+            .iter()
+            .map(|id| manager.get_status(*id).unwrap().stats.pid)
+            .collect();
+
+        // Perform rolling restart
+        let health_check_delay = Duration::from_millis(200);
+        let result = manager.rolling_restart("multi-app", health_check_delay).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 3);
+
+        // Verify all instances were restarted
+        for (idx, id) in instance_ids.iter().enumerate() {
+            let process = manager.get_status(*id).unwrap();
+            assert_ne!(process.stats.pid, initial_pids[idx], "Instance {} should have new PID", idx);
+            assert_eq!(process.stats.restarts, 1);
+            assert_eq!(process.state, ProcessState::Running);
+        }
+
+        // Cleanup
+        for id in instance_ids {
+            let _ = manager.stop(id, true).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rolling_restart_by_id() {
+        let mut manager = ProcessManager::new();
+
+        // Spawn a single instance first
+        let config = create_test_config("id-test");
+        let id = manager.spawn(config).await.unwrap();
+        let initial_pid = manager.get_status(id).unwrap().stats.pid;
+
+        // Perform rolling restart using the instance's ID
+        let health_check_delay = Duration::from_millis(200);
+        let id_str = id.as_u64().to_string();
+        let result = manager.rolling_restart(&id_str, health_check_delay).await;
+
+        assert!(result.is_ok());
+        // Should restart the single instance
+        assert_eq!(result.unwrap(), 1);
+
+        // Verify process was restarted
+        let process = manager.get_status(id).unwrap();
+        assert_ne!(process.stats.pid, initial_pid);
+        assert_eq!(process.stats.restarts, 1);
+
+        // Cleanup
+        let _ = manager.stop(id, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_rolling_restart_nonexistent() {
+        let mut manager = ProcessManager::new();
+        let health_check_delay = Duration::from_millis(100);
+
+        let result = manager.rolling_restart("nonexistent", health_check_delay).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AdasaError::ProcessNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_rolling_restart_health_check() {
+        let mut manager = ProcessManager::new();
+
+        // Spawn multiple instances
+        let mut instance_ids = Vec::new();
+        for i in 0..2 {
+            let config = ProcessConfig {
+                name: format!("health-test-{}", i),
+                script: PathBuf::from("/bin/sleep"),
+                args: vec!["10".to_string()],
+                cwd: None,
+                env: HashMap::new(),
+                instances: 1,
+                autorestart: true,
+                max_restarts: 10,
+                restart_delay_secs: 1,
+                max_memory: None,
+                stop_signal: "SIGTERM".to_string(),
+                stop_timeout_secs: 2,
+            };
+
+            let id = manager.spawn(config).await.unwrap();
+            instance_ids.push(id);
+        }
+
+        // Perform rolling restart with health check delay
+        let health_check_delay = Duration::from_millis(300);
+        let start_time = std::time::Instant::now();
+        let result = manager.rolling_restart("health-test", health_check_delay).await;
+
+        assert!(result.is_ok());
+        
+        // Verify that health check delay was applied
+        // With 2 instances, there should be 1 health check delay (between restarts)
+        let elapsed = start_time.elapsed();
+        assert!(elapsed >= health_check_delay, "Health check delay should be applied");
+
+        // Cleanup
+        for id in instance_ids {
+            let _ = manager.stop(id, true).await;
+        }
     }
 }

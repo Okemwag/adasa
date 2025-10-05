@@ -62,8 +62,12 @@ enum Commands {
 
     /// Restart a process
     Restart {
-        /// Process ID to restart
-        id: u64,
+        /// Process ID or name to restart
+        id: String,
+
+        /// Perform rolling restart for multi-instance processes
+        #[arg(short, long)]
+        rolling: bool,
     },
 
     /// List all managed processes
@@ -164,8 +168,9 @@ impl Cli {
                 force: *force,
             })),
 
-            Commands::Restart { id } => Ok(Command::Restart(RestartOptions {
-                id: ProcessId::new(*id),
+            Commands::Restart { id, rolling } => Ok(Command::Restart(RestartOptions {
+                target: id.clone(),
+                rolling: *rolling,
             })),
 
             Commands::List => Ok(Command::List),
