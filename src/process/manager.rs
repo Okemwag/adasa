@@ -1,5 +1,7 @@
 use crate::config::ProcessConfig;
 use crate::error::{AdasaError, Result};
+use crate::process::monitor::ProcessMonitor;
+use crate::process::restart::{RestartPolicy, RestartTracker};
 use crate::process::spawner::{spawn_process, SpawnedProcess};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
@@ -93,6 +95,16 @@ impl ProcessStats {
             .duration_since(self.started_at)
             .unwrap_or(Duration::from_secs(0))
     }
+
+    /// Record a restart
+    pub fn record_restart(&mut self, new_pid: u32) {
+        self.restarts += 1;
+        self.last_restart = Some(SystemTime::now());
+        self.started_at = SystemTime::now();
+        self.pid = new_pid;
+        self.cpu_usage = 0.0;
+        self.memory_usage = 0;
+    }
 }
 
 /// A managed process with all its metadata
@@ -110,11 +122,21 @@ pub struct ManagedProcess {
     pub child: Child,
     /// Process statistics
     pub stats: ProcessStats,
+    /// Restart policy for this process
+    pub restart_policy: RestartPolicy,
+    /// Restart tracker for this process
+    pub restart_tracker: RestartTracker,
 }
 
 impl ManagedProcess {
     /// Create a new managed process
     fn new(id: ProcessId, name: String, config: ProcessConfig, spawned: SpawnedProcess) -> Self {
+        let restart_policy = RestartPolicy::from_config(
+            config.autorestart,
+            config.max_restarts,
+            config.restart_delay_secs,
+        );
+
         Self {
             id,
             name,
@@ -122,6 +144,8 @@ impl ManagedProcess {
             state: ProcessState::Starting,
             child: spawned.child,
             stats: ProcessStats::new(spawned.pid),
+            restart_policy,
+            restart_tracker: RestartTracker::new(),
         }
     }
 
@@ -141,7 +165,7 @@ impl ManagedProcess {
     }
 
     /// Transition to errored state
-    fn mark_errored(&mut self) {
+    pub(crate) fn mark_errored(&mut self) {
         self.state = ProcessState::Errored;
     }
 }
@@ -152,6 +176,8 @@ pub struct ProcessManager {
     processes: HashMap<ProcessId, ManagedProcess>,
     /// Counter for generating unique process IDs
     next_id: u64,
+    /// Process monitor for resource tracking
+    monitor: ProcessMonitor,
 }
 
 impl ProcessManager {
@@ -160,6 +186,7 @@ impl ProcessManager {
         Self {
             processes: HashMap::new(),
             next_id: 1,
+            monitor: ProcessMonitor::new(),
         }
     }
 
@@ -300,9 +327,14 @@ impl ProcessManager {
 
     /// Remove a process from management (after it has stopped)
     pub fn remove(&mut self, id: ProcessId) -> Result<()> {
-        self.processes
+        let process = self
+            .processes
             .remove(&id)
             .ok_or_else(|| AdasaError::ProcessNotFound(id.to_string()))?;
+
+        // Clear monitor cache for this process
+        self.monitor.clear_cache(process.stats.pid);
+
         Ok(())
     }
 
@@ -317,6 +349,162 @@ impl ProcessManager {
             .values()
             .filter(|p| p.name == name || p.name.starts_with(&format!("{}-", name)))
             .collect()
+    }
+
+    /// Update statistics for all running processes
+    ///
+    /// This should be called periodically to keep process stats up to date
+    ///
+    /// # Returns
+    /// * `Ok(())` - Statistics updated successfully
+    pub fn update_stats(&mut self) -> Result<()> {
+        self.monitor.update_all_stats(self.processes.values_mut())
+    }
+
+    /// Detect crashed processes and return their IDs
+    ///
+    /// This checks if processes are still alive and marks crashed ones as errored
+    ///
+    /// # Returns
+    /// Vector of process IDs that have crashed
+    pub fn detect_crashes(&mut self) -> Vec<ProcessId> {
+        let crashed_pids = self.monitor.detect_crashes(self.processes.values_mut());
+
+        // Convert PIDs to ProcessIds
+        crashed_pids
+            .into_iter()
+            .filter_map(|pid| {
+                self.processes
+                    .iter()
+                    .find(|(_, p)| p.stats.pid == pid)
+                    .map(|(id, _)| *id)
+            })
+            .collect()
+    }
+
+    /// Check if a specific process is still alive
+    ///
+    /// # Arguments
+    /// * `id` - Process ID to check
+    ///
+    /// # Returns
+    /// * `true` - Process is alive
+    /// * `false` - Process has crashed or doesn't exist
+    pub fn is_alive(&mut self, id: ProcessId) -> bool {
+        if let Some(process) = self.processes.get(&id) {
+            self.monitor.is_process_alive(process.stats.pid)
+        } else {
+            false
+        }
+    }
+
+    /// Restart a process (stop and start with same configuration)
+    ///
+    /// # Arguments
+    /// * `id` - Process ID to restart
+    ///
+    /// # Returns
+    /// * `Ok(())` - Process restarted successfully
+    /// * `Err(AdasaError)` - Failed to restart process
+    pub async fn restart(&mut self, id: ProcessId) -> Result<()> {
+        let process = self
+            .processes
+            .get(&id)
+            .ok_or_else(|| AdasaError::ProcessNotFound(id.to_string()))?;
+
+        // Clone the configuration before stopping
+        let config = process.config.clone();
+
+        // Stop the process (gracefully)
+        self.stop(id, false).await?;
+
+        // Spawn a new process with the same configuration
+        let spawned = spawn_process(&config).await?;
+        let new_pid = spawned.pid;
+
+        // Get the process again and update it
+        let process = self
+            .processes
+            .get_mut(&id)
+            .ok_or_else(|| AdasaError::ProcessNotFound(id.to_string()))?;
+
+        // Update process with new child and stats
+        process.child = spawned.child;
+        process.stats.record_restart(new_pid);
+        process.restart_tracker.record_restart();
+        process.state = ProcessState::Running;
+
+        Ok(())
+    }
+
+    /// Attempt to restart a crashed process if policy allows
+    ///
+    /// # Arguments
+    /// * `id` - Process ID to restart
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Process was restarted
+    /// * `Ok(false)` - Restart was not attempted (policy prevented it)
+    /// * `Err(AdasaError)` - Failed to restart process
+    pub async fn try_auto_restart(&mut self, id: ProcessId) -> Result<bool> {
+        let process = self
+            .processes
+            .get(&id)
+            .ok_or_else(|| AdasaError::ProcessNotFound(id.to_string()))?;
+
+        // Check if restart should be attempted
+        if !process
+            .restart_policy
+            .should_restart(&process.restart_tracker)
+        {
+            return Ok(false);
+        }
+
+        // Calculate delay before restart
+        let delay = process
+            .restart_policy
+            .calculate_delay(&process.restart_tracker);
+
+        // Wait for the backoff delay
+        tokio::time::sleep(delay).await;
+
+        // For crashed processes, we don't need to stop them first
+        // Just spawn a new process with the same configuration
+        let config = process.config.clone();
+
+        // Spawn a new process
+        let spawned = spawn_process(&config).await?;
+        let new_pid = spawned.pid;
+
+        // Get the process again and update it
+        let process = self
+            .processes
+            .get_mut(&id)
+            .ok_or_else(|| AdasaError::ProcessNotFound(id.to_string()))?;
+
+        // Update process with new child and stats
+        process.child = spawned.child;
+        process.stats.record_restart(new_pid);
+        process.restart_tracker.record_restart();
+        process.state = ProcessState::Running;
+
+        Ok(true)
+    }
+
+    /// Get restart information for a process
+    ///
+    /// # Arguments
+    /// * `id` - Process ID
+    ///
+    /// # Returns
+    /// * `Some((restart_count, should_restart))` - Restart info
+    /// * `None` - Process not found
+    pub fn get_restart_info(&self, id: ProcessId) -> Option<(usize, bool)> {
+        self.processes.get(&id).map(|p| {
+            let count = p.restart_tracker.restart_count();
+            let should_restart = p.restart_policy.should_restart(&p.restart_tracker);
+            (count, should_restart)
+        })
     }
 }
 
@@ -587,5 +775,270 @@ mod tests {
         assert_eq!(format!("{}", ProcessState::Stopping), "stopping");
         assert_eq!(format!("{}", ProcessState::Stopped), "stopped");
         assert_eq!(format!("{}", ProcessState::Errored), "errored");
+    }
+
+    #[tokio::test]
+    async fn test_update_stats() {
+        let mut manager = ProcessManager::new();
+        let config = create_test_config("test-update-stats");
+
+        let id = manager.spawn(config).await.unwrap();
+
+        // Give process time to start
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Update stats
+        let result = manager.update_stats();
+        assert!(result.is_ok());
+
+        // Check that stats were updated
+        let process = manager.get_status(id).unwrap();
+        // Memory should be > 0 for a running process
+        assert!(process.stats.memory_usage > 0);
+
+        // Cleanup
+        let _ = manager.stop(id, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_detect_crashes() {
+        let mut manager = ProcessManager::new();
+
+        // Spawn a process that will exit immediately
+        let config = ProcessConfig {
+            name: "crash-test".to_string(),
+            script: PathBuf::from("/bin/sh"),
+            args: vec!["-c".to_string(), "exit 1".to_string()],
+            cwd: None,
+            env: HashMap::new(),
+            instances: 1,
+            autorestart: true,
+            max_restarts: 10,
+            restart_delay_secs: 1,
+            max_memory: None,
+            stop_signal: "SIGTERM".to_string(),
+            stop_timeout_secs: 2,
+        };
+
+        let id = manager.spawn(config).await.unwrap();
+
+        // Get the process and wait for it to exit
+        let process = manager.get_mut(id).unwrap();
+        let _ = process.child.wait().await;
+
+        // Wait for system to update
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Detect crashes
+        let crashed = manager.detect_crashes();
+
+        // Process should be detected as crashed
+        assert_eq!(
+            crashed.len(),
+            1,
+            "Expected 1 crashed process, found {}",
+            crashed.len()
+        );
+        assert_eq!(crashed[0], id);
+
+        // Process state should be errored
+        let process = manager.get_status(id).unwrap();
+        assert_eq!(process.state, ProcessState::Errored);
+    }
+
+    #[tokio::test]
+    async fn test_is_alive() {
+        let mut manager = ProcessManager::new();
+        let config = create_test_config("test-alive");
+
+        let id = manager.spawn(config).await.unwrap();
+
+        // Process should be alive
+        assert!(manager.is_alive(id));
+
+        // Stop the process
+        manager.stop(id, true).await.unwrap();
+
+        // Give system time to update
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Process should not be alive
+        assert!(!manager.is_alive(id));
+    }
+
+    #[tokio::test]
+    async fn test_is_alive_nonexistent() {
+        let mut manager = ProcessManager::new();
+        let id = ProcessId::new(999);
+
+        // Nonexistent process should not be alive
+        assert!(!manager.is_alive(id));
+    }
+
+    #[tokio::test]
+    async fn test_restart_process() {
+        let mut manager = ProcessManager::new();
+        let config = create_test_config("test-restart");
+
+        let id = manager.spawn(config).await.unwrap();
+
+        // Get initial PID
+        let initial_pid = manager.get_status(id).unwrap().stats.pid;
+        let initial_restarts = manager.get_status(id).unwrap().stats.restarts;
+
+        // Restart the process
+        let result = manager.restart(id).await;
+        assert!(result.is_ok());
+
+        // Verify process was restarted
+        let process = manager.get_status(id).unwrap();
+        assert_eq!(process.state, ProcessState::Running);
+        assert_ne!(process.stats.pid, initial_pid); // New PID
+        assert_eq!(process.stats.restarts, initial_restarts + 1);
+        assert!(process.stats.last_restart.is_some());
+
+        // Cleanup
+        let _ = manager.stop(id, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_restart_nonexistent() {
+        let mut manager = ProcessManager::new();
+        let id = ProcessId::new(999);
+
+        let result = manager.restart(id).await;
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AdasaError::ProcessNotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_auto_restart_allowed() {
+        let mut manager = ProcessManager::new();
+        let config = create_test_config("test-auto-restart");
+
+        let id = manager.spawn(config).await.unwrap();
+
+        // Get initial PID
+        let initial_pid = manager.get_status(id).unwrap().stats.pid;
+
+        // Simulate a crash by marking as errored
+        manager.get_mut(id).unwrap().mark_errored();
+
+        // Try auto restart
+        let result = manager.try_auto_restart(id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap()); // Should have restarted
+
+        // Verify process was restarted
+        let process = manager.get_status(id).unwrap();
+        assert_eq!(process.state, ProcessState::Running);
+        assert_ne!(process.stats.pid, initial_pid);
+        assert_eq!(process.stats.restarts, 1);
+
+        // Cleanup
+        let _ = manager.stop(id, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_auto_restart_max_limit() {
+        let mut manager = ProcessManager::new();
+
+        // Create config with low max_restarts
+        let config = ProcessConfig {
+            name: "test-max-restart".to_string(),
+            script: PathBuf::from("/bin/sleep"),
+            args: vec!["10".to_string()],
+            cwd: None,
+            env: HashMap::new(),
+            instances: 1,
+            autorestart: true,
+            max_restarts: 2,       // Only allow 2 restarts
+            restart_delay_secs: 0, // No delay for faster test
+            max_memory: None,
+            stop_signal: "SIGTERM".to_string(),
+            stop_timeout_secs: 2,
+        };
+
+        let id = manager.spawn(config).await.unwrap();
+
+        // First restart should succeed
+        let result1 = manager.try_auto_restart(id).await;
+        assert!(result1.is_ok());
+        assert!(result1.unwrap());
+
+        // Second restart should succeed
+        let result2 = manager.try_auto_restart(id).await;
+        assert!(result2.is_ok());
+        assert!(result2.unwrap());
+
+        // Third restart should be blocked
+        let result3 = manager.try_auto_restart(id).await;
+        assert!(result3.is_ok());
+        assert!(!result3.unwrap()); // Should NOT have restarted
+
+        // Cleanup
+        let _ = manager.stop(id, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_get_restart_info() {
+        let mut manager = ProcessManager::new();
+        let config = create_test_config("test-restart-info");
+
+        let id = manager.spawn(config).await.unwrap();
+
+        // Initial state
+        let (count, should_restart) = manager.get_restart_info(id).unwrap();
+        assert_eq!(count, 0);
+        assert!(should_restart);
+
+        // After one restart
+        manager.restart(id).await.unwrap();
+        let (count, should_restart) = manager.get_restart_info(id).unwrap();
+        assert_eq!(count, 1);
+        assert!(should_restart);
+
+        // Cleanup
+        let _ = manager.stop(id, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_restart_preserves_config() {
+        let mut manager = ProcessManager::new();
+
+        let config = ProcessConfig {
+            name: "test-preserve".to_string(),
+            script: PathBuf::from("/bin/sleep"),
+            args: vec!["10".to_string()],
+            cwd: Some(PathBuf::from("/tmp")),
+            env: {
+                let mut env = HashMap::new();
+                env.insert("TEST_VAR".to_string(), "test_value".to_string());
+                env
+            },
+            instances: 1,
+            autorestart: true,
+            max_restarts: 10,
+            restart_delay_secs: 1,
+            max_memory: None,
+            stop_signal: "SIGTERM".to_string(),
+            stop_timeout_secs: 2,
+        };
+
+        let id = manager.spawn(config.clone()).await.unwrap();
+
+        // Restart the process
+        manager.restart(id).await.unwrap();
+
+        // Verify configuration is preserved
+        let process = manager.get_status(id).unwrap();
+        assert_eq!(process.config.name, config.name);
+        assert_eq!(process.config.script, config.script);
+        assert_eq!(process.config.args, config.args);
+        assert_eq!(process.config.cwd, config.cwd);
+        assert_eq!(process.config.env, config.env);
+
+        // Cleanup
+        let _ = manager.stop(id, true).await;
     }
 }
