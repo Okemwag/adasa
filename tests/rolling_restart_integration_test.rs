@@ -23,6 +23,8 @@ async fn test_rolling_restart_integration() {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: adasa::config::LimitAction::Log,
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 5,
         };
@@ -88,6 +90,8 @@ async fn test_rolling_restart_maintains_availability() {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: adasa::config::LimitAction::Log,
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 5,
         };
@@ -151,6 +155,8 @@ async fn test_rolling_restart_with_failing_health_check() {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: adasa::config::LimitAction::Log,
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 2,
         };

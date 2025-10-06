@@ -4,6 +4,18 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// Action to take when resource limits are exceeded
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LimitAction {
+    /// Log the violation but continue running
+    Log,
+    /// Restart the process
+    Restart,
+    /// Stop the process
+    Stop,
+}
+
 /// Process configuration with all settings for managing a process
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessConfig {
@@ -45,6 +57,14 @@ pub struct ProcessConfig {
     #[serde(default)]
     pub max_memory: Option<u64>,
 
+    /// Maximum CPU usage percentage (0-100, optional)
+    #[serde(default)]
+    pub max_cpu: Option<u32>,
+
+    /// Action to take when resource limits are exceeded
+    #[serde(default = "default_limit_action")]
+    pub limit_action: LimitAction,
+
     /// Signal to send on stop (default: SIGTERM)
     #[serde(default = "default_stop_signal")]
     pub stop_signal: String,
@@ -77,6 +97,10 @@ fn default_stop_signal() -> String {
 
 fn default_stop_timeout() -> u64 {
     10
+}
+
+fn default_limit_action() -> LimitAction {
+    LimitAction::Log
 }
 
 impl ProcessConfig {
@@ -228,6 +252,15 @@ impl ProcessConfig {
             }
         }
 
+        // Validate CPU limit if specified
+        if let Some(cpu) = self.max_cpu {
+            if cpu == 0 || cpu > 100 {
+                return Err(AdasaError::ConfigValidationError(
+                    "max_cpu must be between 1 and 100".to_string(),
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -306,6 +339,8 @@ mod tests {
             max_restarts: default_max_restarts(),
             restart_delay_secs: default_restart_delay(),
             max_memory: None,
+            max_cpu: None,
+            limit_action: default_limit_action(),
             stop_signal: default_stop_signal(),
             stop_timeout_secs: default_stop_timeout(),
         };
@@ -331,6 +366,8 @@ mod tests {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: default_limit_action(),
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 10,
         };
@@ -351,6 +388,8 @@ mod tests {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: default_limit_action(),
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 10,
         };
@@ -374,6 +413,8 @@ mod tests {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: default_limit_action(),
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 10,
         };
@@ -397,6 +438,8 @@ mod tests {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: default_limit_action(),
             stop_signal: "INVALID".to_string(),
             stop_timeout_secs: 10,
         };
@@ -427,6 +470,8 @@ mod tests {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: default_limit_action(),
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 10,
         };

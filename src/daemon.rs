@@ -92,6 +92,8 @@ mod daemon_core {
                         max_restarts: persisted.max_restarts,
                         restart_delay_secs: 1,
                         max_memory: None,
+                        max_cpu: None,
+                        limit_action: crate::config::LimitAction::Log,
                         stop_signal: "SIGTERM".to_string(),
                         stop_timeout_secs: 10,
                     };
@@ -224,6 +226,8 @@ mod daemon_core {
                             max_restarts: 10,
                             restart_delay_secs: 1,
                             max_memory: None,
+                            max_cpu: None,
+                            limit_action: crate::config::LimitAction::Log,
                             stop_signal: "SIGTERM".to_string(),
                             stop_timeout_secs: 10,
                         };
@@ -534,30 +538,31 @@ mod daemon_core {
             log_manager: Arc<RwLock<LogManager>>,
             state_store: StateStore,
         ) -> Result<()> {
-            println!("Shutting down daemon...");
+            tracing::info!("Shutting down daemon gracefully...");
 
-            // Stop all processes
+            // Stop all processes gracefully
             let mut pm = process_manager.write().await;
-            let process_ids: Vec<_> = pm.list().iter().map(|p| p.id).collect();
-
-            for id in process_ids {
-                println!("Stopping process: {}", id);
-                if let Err(e) = pm.stop(id, false).await {
-                    eprintln!("Failed to stop process {}: {}", id, e);
-                }
+            if let Err(e) = pm.stop_all().await {
+                tracing::error!("Error during graceful shutdown of processes: {}", e);
             }
 
             // Save state
             let state = Self::build_state_from_manager(&pm).await;
             if let Err(e) = state_store.save(&state) {
-                eprintln!("Failed to save state: {}", e);
+                tracing::error!("Failed to save state: {}", e);
+            } else {
+                tracing::info!("Daemon state saved successfully");
             }
 
             // Flush all logs
             let mut lm = log_manager.write().await;
             if let Err(e) = lm.flush_all().await {
-                eprintln!("Failed to flush logs: {}", e);
+                tracing::error!("Failed to flush logs: {}", e);
+            } else {
+                tracing::info!("All logs flushed successfully");
             }
+
+            tracing::info!("Daemon shutdown complete");
 
             Ok(())
         }

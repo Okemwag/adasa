@@ -110,6 +110,14 @@ impl ProcessSupervisor {
         // Update process statistics (for processes that are still running)
         manager.update_stats()?;
 
+        // Check resource limits and handle violations
+        let violations = manager.check_resource_limits().await;
+        if !violations.is_empty() {
+            for (process_id, message) in violations {
+                info!("Resource limit violation for process {}: {}", process_id, message);
+            }
+        }
+
         // Clean up completed restarts
         self.cleanup_restarting(manager);
 
@@ -265,6 +273,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn create_test_config(name: &str, autorestart: bool, max_restarts: usize) -> ProcessConfig {
+        use crate::config::LimitAction;
         ProcessConfig {
             name: name.to_string(),
             script: PathBuf::from("/bin/sh"),
@@ -276,6 +285,8 @@ mod tests {
             max_restarts,
             restart_delay_secs: 0, // No delay for faster tests
             max_memory: None,
+            max_cpu: None,
+            limit_action: LimitAction::Log,
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 2,
         }
@@ -312,6 +323,8 @@ mod tests {
             max_restarts: 10,
             restart_delay_secs: 0,
             max_memory: None,
+            max_cpu: None,
+            limit_action: crate::config::LimitAction::Log,
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 2,
         };
@@ -363,6 +376,8 @@ mod tests {
             max_restarts: 2,
             restart_delay_secs: 0,
             max_memory: None,
+            max_cpu: None,
+            limit_action: crate::config::LimitAction::Log,
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 2,
         };

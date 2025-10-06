@@ -34,6 +34,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_restarts: 3, // Allow 3 restarts
         restart_delay_secs: 1,
         max_memory: None,
+        max_cpu: None,
+        limit_action: adasa::config::LimitAction::Log,
         stop_signal: "SIGTERM".to_string(),
         stop_timeout_secs: 2,
     };
@@ -50,6 +52,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_restarts: 10,
         restart_delay_secs: 1,
         max_memory: None,
+        max_cpu: None,
+        limit_action: adasa::config::LimitAction::Log,
         stop_signal: "SIGTERM".to_string(),
         stop_timeout_secs: 2,
     };

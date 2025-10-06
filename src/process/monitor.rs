@@ -159,6 +159,7 @@ mod tests {
     use tokio::process::Command;
 
     fn create_test_config(name: &str) -> ProcessConfig {
+        use crate::config::LimitAction;
         ProcessConfig {
             name: name.to_string(),
             script: PathBuf::from("/bin/sleep"),
@@ -170,6 +171,8 @@ mod tests {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: LimitAction::Log,
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 2,
         }
@@ -234,6 +237,7 @@ mod tests {
                 config.restart_delay_secs,
             ),
             restart_tracker: crate::process::RestartTracker::new(),
+            cgroup_manager: None,
         };
 
         // Update stats
@@ -275,6 +279,7 @@ mod tests {
                 config.restart_delay_secs,
             ),
             restart_tracker: crate::process::RestartTracker::new(),
+            cgroup_manager: None,
         };
 
         // Wait for process to exit

@@ -1,7 +1,9 @@
 // Example demonstrating restart logic with backoff
 // This is not meant to be compiled, just for documentation
 
-use adasa::process::{BackoffStrategy, ProcessConfig, ProcessManager, RestartPolicy};
+use adasa::config::ProcessConfig;
+use adasa::ipc::protocol::ProcessId;
+use adasa::process::{BackoffStrategy, ProcessManager, RestartPolicy};
 use std::time::Duration;
 
 #[tokio::main]
@@ -14,10 +16,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: "my-app".to_string(),
         script: "/usr/bin/node".into(),
         args: vec!["server.js".to_string()],
+        cwd: None,
+        env: std::collections::HashMap::new(),
+        instances: 1,
         autorestart: true, // Enable automatic restart
         max_restarts: 10,  // Max 10 restarts in 60 seconds
         restart_delay_secs: 1, // Initial delay of 1 second
-                           // ... other config
+        max_memory: None,
+        max_cpu: None,
+        limit_action: adasa::config::LimitAction::Log,
+        stop_signal: "SIGTERM".to_string(),
+        stop_timeout_secs: 10,
     };
 
     let process_id = manager.spawn(config).await?;

@@ -89,6 +89,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn create_test_config(name: &str, script: PathBuf) -> ProcessConfig {
+        use crate::config::LimitAction;
         ProcessConfig {
             name: name.to_string(),
             script,
@@ -100,6 +101,8 @@ mod tests {
             max_restarts: 10,
             restart_delay_secs: 1,
             max_memory: None,
+            max_cpu: None,
+            limit_action: LimitAction::Log,
             stop_signal: "SIGTERM".to_string(),
             stop_timeout_secs: 10,
         }

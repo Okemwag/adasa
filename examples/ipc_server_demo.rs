@@ -61,10 +61,10 @@ async fn main() -> Result<()> {
                 ))
             }
             Command::Restart(opts) => {
-                println!("Restarting process: {}", opts.id);
+                println!("Restarting process: {}", opts.target);
                 Ok(Response::success(
                     1,
-                    ResponseData::Restarted { id: opts.id },
+                    ResponseData::Restarted { id: ProcessId::new(1) },
                 ))
             }
             _ => Ok(Response::success(

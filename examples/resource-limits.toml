@@ -1,0 +1,46 @@
+# Example configuration demonstrating resource limits
+
+[[processes]]
+name = "memory-limited-app"
+script = "/usr/bin/node"
+args = ["server.js"]
+instances = 1
+autorestart = true
+
+# Memory limit: 512MB
+max_memory = 536870912  # 512 * 1024 * 1024 bytes
+
+# CPU limit: 50% of one core
+max_cpu = 50
+
+# Action when limits are exceeded: log, restart, or stop
+limit_action = "restart"
+
+[[processes]]
+name = "cpu-limited-worker"
+script = "/usr/bin/python3"
+args = ["worker.py"]
+instances = 2
+autorestart = true
+
+# CPU limit: 25% of one core
+max_cpu = 25
+
+# Just log violations, don't restart
+limit_action = "log"
+
+[[processes]]
+name = "strict-limits-service"
+script = "/usr/bin/java"
+args = ["-jar", "service.jar"]
+instances = 1
+autorestart = true
+
+# Memory limit: 1GB
+max_memory = 1073741824  # 1024 * 1024 * 1024 bytes
+
+# CPU limit: 75%
+max_cpu = 75
+
+# Stop the process if it exceeds limits
+limit_action = "stop"

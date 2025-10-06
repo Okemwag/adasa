@@ -1,7 +1,9 @@
 // Example demonstrating process monitoring functionality
-// This is not meant to be compiled, just for documentation
 
-use adasa::process::{ProcessConfig, ProcessManager};
+use adasa::config::{LimitAction, ProcessConfig};
+use adasa::process::ProcessManager;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[tokio::main]
@@ -12,9 +14,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn a process
     let config = ProcessConfig {
         name: "my-app".to_string(),
-        script: "/usr/bin/node".into(),
-        args: vec!["server.js".to_string()],
-        // ... other config
+        script: PathBuf::from("/bin/sleep"),
+        args: vec!["60".to_string()],
+        cwd: None,
+        env: HashMap::new(),
+        instances: 1,
+        autorestart: true,
+        max_restarts: 10,
+        restart_delay_secs: 1,
+        max_memory: None,
+        max_cpu: None,
+        limit_action: LimitAction::Log,
+        stop_signal: "SIGTERM".to_string(),
+        stop_timeout_secs: 10,
     };
 
     let process_id = manager.spawn(config).await?;
