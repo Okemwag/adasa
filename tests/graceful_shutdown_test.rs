@@ -52,7 +52,7 @@ async fn test_graceful_shutdown_with_sigint() {
     // Spawn a process with SIGINT as stop signal
     let mut config = create_test_config("sigint-test");
     config.stop_signal = "SIGINT".to_string();
-    
+
     let id = manager.spawn(config).await.unwrap();
 
     // Verify process is running
@@ -76,7 +76,7 @@ async fn test_graceful_shutdown_with_custom_timeout() {
     // Spawn a process with custom timeout
     let mut config = create_test_config("timeout-test");
     config.stop_timeout_secs = 3;
-    
+
     let id = manager.spawn(config).await.unwrap();
 
     // Verify process is running
@@ -90,7 +90,7 @@ async fn test_graceful_shutdown_with_custom_timeout() {
     let elapsed = start.elapsed();
 
     assert!(result.is_ok());
-    
+
     // Should complete quickly since sleep responds to SIGTERM
     assert!(elapsed < Duration::from_secs(3));
 
@@ -106,7 +106,7 @@ async fn test_force_kill_bypasses_graceful_shutdown() {
     // Spawn a process with a long timeout
     let mut config = create_test_config("force-kill-test");
     config.stop_timeout_secs = 10; // Long timeout
-    
+
     let id = manager.spawn(config).await.unwrap();
 
     // Force kill should be immediate
@@ -115,7 +115,7 @@ async fn test_force_kill_bypasses_graceful_shutdown() {
     let elapsed = start.elapsed();
 
     assert!(result.is_ok());
-    
+
     // Should be much faster than the timeout
     assert!(elapsed < Duration::from_secs(1));
 
@@ -131,10 +131,10 @@ async fn test_stop_all_graceful_shutdown() {
     // Spawn multiple processes with different stop signals
     let mut config1 = create_test_config("multi-1");
     config1.stop_signal = "SIGTERM".to_string();
-    
+
     let mut config2 = create_test_config("multi-2");
     config2.stop_signal = "SIGINT".to_string();
-    
+
     let mut config3 = create_test_config("multi-3");
     config3.stop_signal = "SIGHUP".to_string();
 
@@ -165,23 +165,23 @@ async fn test_graceful_shutdown_respects_signal_config() {
 
     // Test each supported signal
     let signals = vec![
-        "SIGTERM", "SIGINT", "SIGQUIT", "SIGHUP", "SIGUSR1", "SIGUSR2"
+        "SIGTERM", "SIGINT", "SIGQUIT", "SIGHUP", "SIGUSR1", "SIGUSR2",
     ];
 
     for signal in signals {
         let mut config = create_test_config(&format!("signal-{}", signal));
         config.stop_signal = signal.to_string();
-        
+
         let id = manager.spawn(config).await.unwrap();
-        
+
         // Verify the signal is configured correctly
         let process = manager.get_status(id).unwrap();
         assert_eq!(process.config.stop_signal, signal);
-        
+
         // Stop gracefully
         let result = manager.stop(id, false).await;
         assert!(result.is_ok(), "Failed to stop with signal {}", signal);
-        
+
         // Verify stopped
         let process = manager.get_status(id).unwrap();
         assert_eq!(process.state, ProcessState::Stopped);

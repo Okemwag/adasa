@@ -1,9 +1,9 @@
 // Logs module - Log capture and rotation
 
-mod writer;
 mod manager;
 mod reader;
+mod writer;
 
-pub use writer::LogWriter;
 pub use manager::LogManager;
-pub use reader::{LogEntry, LogReadOptions, LogSource, LogStream, read_logs, read_last_lines};
+pub use reader::{read_last_lines, read_logs, LogEntry, LogReadOptions, LogSource, LogStream};
+pub use writer::LogWriter;

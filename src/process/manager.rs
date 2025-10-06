@@ -9,7 +9,7 @@ use nix::unistd::Pid;
 use std::collections::HashMap;
 use std::time::Duration;
 
-pub use crate::process::types::{ProcessStats, ProcessState as ProcState};
+pub use crate::process::types::{ProcessState as ProcState, ProcessStats};
 
 pub struct ProcessManager {
     processes: HashMap<ProcessId, ManagedProcess>,
@@ -43,7 +43,11 @@ impl ProcessManager {
         if let Some(cpu_limit) = config.max_cpu {
             if let Some(ref cgroup_manager) = managed.cgroup_manager {
                 if let Err(e) = cgroup_manager.apply_cpu_limit(managed.stats.pid, cpu_limit) {
-                    tracing::warn!("Failed to apply CPU limit to process {}: {}", managed.name, e);
+                    tracing::warn!(
+                        "Failed to apply CPU limit to process {}: {}",
+                        managed.name,
+                        e
+                    );
                 }
             }
         }
@@ -67,9 +71,16 @@ impl ProcessManager {
         let process_name = process.name.clone();
 
         if force {
-            tracing::info!("Force stopping process {} (PID: {}) with SIGKILL", process_name, pid);
+            tracing::info!(
+                "Force stopping process {} (PID: {}) with SIGKILL",
+                process_name,
+                pid
+            );
             signal::kill(nix_pid, Signal::SIGKILL).map_err(|e| {
-                AdasaError::StopError(process_name.clone(), format!("Failed to send SIGKILL: {}", e))
+                AdasaError::StopError(
+                    process_name.clone(),
+                    format!("Failed to send SIGKILL: {}", e),
+                )
             })?;
         } else {
             let stop_signal = Self::parse_signal(&process.config.stop_signal)?;
@@ -89,19 +100,34 @@ impl ProcessManager {
             })?;
 
             let timeout = process.config.stop_timeout();
-            tracing::debug!("Waiting {:?} for process {} to exit gracefully", timeout, process_name);
+            tracing::debug!(
+                "Waiting {:?} for process {} to exit gracefully",
+                timeout,
+                process_name
+            );
 
             let wait_result = tokio::time::timeout(timeout, process.child.wait()).await;
 
             match wait_result {
                 Ok(Ok(status)) => {
-                    tracing::info!("Process {} exited gracefully with status: {:?}", process_name, status);
+                    tracing::info!(
+                        "Process {} exited gracefully with status: {:?}",
+                        process_name,
+                        status
+                    );
                 }
                 Ok(Err(e)) => {
-                    return Err(AdasaError::StopError(process_name, format!("Wait failed: {}", e)));
+                    return Err(AdasaError::StopError(
+                        process_name,
+                        format!("Wait failed: {}", e),
+                    ));
                 }
                 Err(_) => {
-                    tracing::warn!("Process {} did not exit within {:?}, sending SIGKILL", process_name, timeout);
+                    tracing::warn!(
+                        "Process {} did not exit within {:?}, sending SIGKILL",
+                        process_name,
+                        timeout
+                    );
                     signal::kill(nix_pid, Signal::SIGKILL).map_err(|e| {
                         AdasaError::StopError(
                             process_name.clone(),
@@ -129,7 +155,10 @@ impl ProcessManager {
             "SIGHUP" => Ok(Signal::SIGHUP),
             "SIGUSR1" => Ok(Signal::SIGUSR1),
             "SIGUSR2" => Ok(Signal::SIGUSR2),
-            _ => Err(AdasaError::SignalError(format!("Invalid signal name: {}", signal_name))),
+            _ => Err(AdasaError::SignalError(format!(
+                "Invalid signal name: {}",
+                signal_name
+            ))),
         }
     }
 
@@ -225,11 +254,16 @@ impl ProcessManager {
             .get(&id)
             .ok_or_else(|| AdasaError::ProcessNotFound(id.to_string()))?;
 
-        if !process.restart_policy.should_restart(&process.restart_tracker) {
+        if !process
+            .restart_policy
+            .should_restart(&process.restart_tracker)
+        {
             return Ok(false);
         }
 
-        let delay = process.restart_policy.calculate_delay(&process.restart_tracker);
+        let delay = process
+            .restart_policy
+            .calculate_delay(&process.restart_tracker);
 
         tokio::time::sleep(delay).await;
 
@@ -268,12 +302,18 @@ impl ProcessManager {
             let id = ProcessId::new(id_num);
             if let Some(process) = self.processes.get(&id) {
                 let base_name = &process.name;
-                self.find_all_by_name(base_name).iter().map(|p| p.id).collect()
+                self.find_all_by_name(base_name)
+                    .iter()
+                    .map(|p| p.id)
+                    .collect()
             } else {
                 return Err(AdasaError::ProcessNotFound(name_or_id.to_string()));
             }
         } else {
-            self.find_all_by_name(name_or_id).iter().map(|p| p.id).collect()
+            self.find_all_by_name(name_or_id)
+                .iter()
+                .map(|p| p.id)
+                .collect()
         };
 
         if instances.is_empty() {
@@ -298,7 +338,10 @@ impl ProcessManager {
             self.restart(*instance_id).await?;
 
             if idx < instances.len() - 1 {
-                println!("Waiting {:?} for health check before restarting next instance...", health_check_delay);
+                println!(
+                    "Waiting {:?} for health check before restarting next instance...",
+                    health_check_delay
+                );
                 tokio::time::sleep(health_check_delay).await;
 
                 if !self.is_alive(*instance_id) {
@@ -314,7 +357,10 @@ impl ProcessManager {
             restarted_count += 1;
         }
 
-        println!("Rolling restart completed: {} instances restarted successfully", restarted_count);
+        println!(
+            "Rolling restart completed: {} instances restarted successfully",
+            restarted_count
+        );
 
         Ok(restarted_count)
     }

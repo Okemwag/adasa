@@ -6,7 +6,6 @@
 /// 3. Maintain availability during the restart process
 ///
 /// Run with: cargo run --example rolling_restart_demo
-
 use adasa::config::ProcessConfig;
 use adasa::process::ProcessManager;
 use std::collections::HashMap;
@@ -70,7 +69,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .rolling_restart("web-server", health_check_delay)
         .await?;
 
-    println!("\n✅ Rolling restart completed: {} instances restarted\n", result);
+    println!(
+        "\n✅ Rolling restart completed: {} instances restarted\n",
+        result
+    );
 
     // Display final status
     println!("Final process status:");

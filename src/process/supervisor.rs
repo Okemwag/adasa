@@ -114,7 +114,10 @@ impl ProcessSupervisor {
         let violations = manager.check_resource_limits().await;
         if !violations.is_empty() {
             for (process_id, message) in violations {
-                info!("Resource limit violation for process {}: {}", process_id, message);
+                info!(
+                    "Resource limit violation for process {}: {}",
+                    process_id, message
+                );
             }
         }
 

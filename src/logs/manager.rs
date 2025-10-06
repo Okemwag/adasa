@@ -1,5 +1,5 @@
 use crate::error::{AdasaError, Result};
-use crate::logs::{LogWriter, LogEntry, LogReadOptions, LogStream};
+use crate::logs::{LogEntry, LogReadOptions, LogStream, LogWriter};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, BufReader};

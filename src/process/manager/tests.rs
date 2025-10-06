@@ -311,7 +311,9 @@ async fn test_stop_all_processes() {
 
 #[tokio::test]
 async fn test_parse_signal_valid() {
-    let valid_signals = vec!["SIGTERM", "SIGINT", "SIGQUIT", "SIGKILL", "SIGHUP", "SIGUSR1", "SIGUSR2"];
+    let valid_signals = vec![
+        "SIGTERM", "SIGINT", "SIGQUIT", "SIGKILL", "SIGHUP", "SIGUSR1", "SIGUSR2",
+    ];
 
     for signal_name in valid_signals {
         let result = ProcessManager::parse_signal(signal_name);

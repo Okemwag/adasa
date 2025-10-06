@@ -1,12 +1,4 @@
-mod cli;
-mod config;
-mod error;
-mod ipc;
-mod logs;
-mod process;
-mod state;
-
-use cli::Cli;
+use adasa::cli::Cli;
 
 fn main() {
     // Initialize CLI and execute command

@@ -2,8 +2,8 @@ use crate::error::{AdasaError, Result};
 use chrono::{DateTime, Local};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
 use tokio::fs::File as TokioFile;
+use tokio::io::AsyncWriteExt;
 
 /// Default maximum log file size before rotation (10MB)
 const DEFAULT_MAX_LOG_SIZE: u64 = 10 * 1024 * 1024;
@@ -38,11 +38,7 @@ impl LogWriter {
     /// # Returns
     /// * `Ok(LogWriter)` - Successfully created log writer
     /// * `Err(AdasaError)` - Failed to create log files
-    pub async fn new(
-        log_dir: &Path,
-        process_name: &str,
-        process_id: u64,
-    ) -> Result<Self> {
+    pub async fn new(log_dir: &Path, process_name: &str, process_id: u64) -> Result<Self> {
         Self::with_max_size(log_dir, process_name, process_id, DEFAULT_MAX_LOG_SIZE).await
     }
 
@@ -82,14 +78,8 @@ impl LogWriter {
             .map_err(|e| AdasaError::LogFileError(format!("Failed to open stderr log: {}", e)))?;
 
         // Get current file sizes
-        let stdout_size = stdout_file
-            .metadata()
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let stderr_size = stderr_file
-            .metadata()
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let stdout_size = stdout_file.metadata().map(|m| m.len()).unwrap_or(0);
+        let stderr_size = stderr_file.metadata().map(|m| m.len()).unwrap_or(0);
 
         // Convert to tokio files
         let stdout_file = TokioFile::from_std(stdout_file);
@@ -129,12 +119,14 @@ impl LogWriter {
         let timestamped_data = self.format_log_entry(&timestamp, data);
 
         // Write to file
-        self.stdout_file.write_all(&timestamped_data)
+        self.stdout_file
+            .write_all(&timestamped_data)
             .await
             .map_err(|e| AdasaError::LogError(format!("Failed to write to log: {}", e)))?;
 
         // Flush to ensure data is written
-        self.stdout_file.flush()
+        self.stdout_file
+            .flush()
             .await
             .map_err(|e| AdasaError::LogError(format!("Failed to flush log: {}", e)))?;
 
@@ -167,12 +159,14 @@ impl LogWriter {
         let timestamped_data = self.format_log_entry(&timestamp, data);
 
         // Write to file
-        self.stderr_file.write_all(&timestamped_data)
+        self.stderr_file
+            .write_all(&timestamped_data)
             .await
             .map_err(|e| AdasaError::LogError(format!("Failed to write to log: {}", e)))?;
 
         // Flush to ensure data is written
-        self.stderr_file.flush()
+        self.stderr_file
+            .flush()
             .await
             .map_err(|e| AdasaError::LogError(format!("Failed to flush log: {}", e)))?;
 
@@ -186,39 +180,40 @@ impl LogWriter {
     fn format_log_entry(&self, timestamp: &DateTime<Local>, data: &[u8]) -> Vec<u8> {
         let timestamp_str = timestamp.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
         let mut entry = Vec::with_capacity(timestamp_str.len() + 3 + data.len());
-        
+
         // Format: [YYYY-MM-DD HH:MM:SS.mmm] <data>
         entry.extend_from_slice(b"[");
         entry.extend_from_slice(timestamp_str.as_bytes());
         entry.extend_from_slice(b"] ");
         entry.extend_from_slice(data);
-        
+
         // Ensure newline at end if not present
         if !data.ends_with(b"\n") {
             entry.push(b'\n');
         }
-        
+
         entry
     }
 
     /// Rotate a log file by renaming it with a timestamp
     async fn rotate_log(&self, file_path: &Path, _log_type: &str) -> Result<()> {
         let timestamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
-        let parent = file_path.parent().ok_or_else(|| {
-            AdasaError::LogRotationError("Invalid log file path".to_string())
-        })?;
-        
-        let file_stem = file_path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
-            AdasaError::LogRotationError("Invalid log file name".to_string())
-        })?;
-        
+        let parent = file_path
+            .parent()
+            .ok_or_else(|| AdasaError::LogRotationError("Invalid log file path".to_string()))?;
+
+        let file_stem = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| AdasaError::LogRotationError("Invalid log file name".to_string()))?;
+
         let rotated_path = parent.join(format!("{}-{}.log", file_stem, timestamp));
-        
+
         // Rename the current log file
         tokio::fs::rename(file_path, &rotated_path)
             .await
             .map_err(|e| AdasaError::LogRotationError(format!("Failed to rotate log: {}", e)))?;
-        
+
         Ok(())
     }
 
@@ -229,7 +224,7 @@ impl LogWriter {
             .append(true)
             .open(file_path)
             .map_err(|e| AdasaError::LogFileError(format!("Failed to reopen log file: {}", e)))?;
-        
+
         Ok(TokioFile::from_std(file))
     }
 
@@ -264,12 +259,12 @@ impl LogWriter {
             .flush()
             .await
             .map_err(|e| AdasaError::LogError(format!("Failed to flush stdout: {}", e)))?;
-        
+
         self.stderr_file
             .flush()
             .await
             .map_err(|e| AdasaError::LogError(format!("Failed to flush stderr: {}", e)))?;
-        
+
         Ok(())
     }
 }
@@ -299,7 +294,7 @@ mod tests {
         let log_dir = temp_dir.path();
 
         let mut writer = LogWriter::new(log_dir, "test-process", 1).await.unwrap();
-        
+
         let result = writer.write_stdout(b"Hello, stdout!").await;
         assert!(result.is_ok());
 
@@ -307,7 +302,9 @@ mod tests {
         writer.flush().await.unwrap();
 
         // Read the file and verify content
-        let content = tokio::fs::read_to_string(writer.stdout_path()).await.unwrap();
+        let content = tokio::fs::read_to_string(writer.stdout_path())
+            .await
+            .unwrap();
         assert!(content.contains("Hello, stdout!"));
         assert!(content.starts_with("["));
     }
@@ -318,13 +315,15 @@ mod tests {
         let log_dir = temp_dir.path();
 
         let mut writer = LogWriter::new(log_dir, "test-process", 1).await.unwrap();
-        
+
         let result = writer.write_stderr(b"Error message").await;
         assert!(result.is_ok());
 
         writer.flush().await.unwrap();
 
-        let content = tokio::fs::read_to_string(writer.stderr_path()).await.unwrap();
+        let content = tokio::fs::read_to_string(writer.stderr_path())
+            .await
+            .unwrap();
         assert!(content.contains("Error message"));
         assert!(content.starts_with("["));
     }
@@ -335,11 +334,16 @@ mod tests {
         let log_dir = temp_dir.path();
 
         // Create writer with small max size to trigger rotation
-        let mut writer = LogWriter::with_max_size(log_dir, "test-process", 1, 100).await.unwrap();
-        
+        let mut writer = LogWriter::with_max_size(log_dir, "test-process", 1, 100)
+            .await
+            .unwrap();
+
         // Write enough data to trigger rotation
         for _ in 0..10 {
-            writer.write_stdout(b"This is a test log entry").await.unwrap();
+            writer
+                .write_stdout(b"This is a test log entry")
+                .await
+                .unwrap();
         }
 
         writer.flush().await.unwrap();
@@ -359,7 +363,11 @@ mod tests {
             .collect();
 
         // Should have at least 2 files (current + rotated)
-        assert!(log_files.len() >= 2, "Expected at least 2 log files, found {}", log_files.len());
+        assert!(
+            log_files.len() >= 2,
+            "Expected at least 2 log files, found {}",
+            log_files.len()
+        );
     }
 
     #[tokio::test]
@@ -368,14 +376,16 @@ mod tests {
         let log_dir = temp_dir.path();
 
         let mut writer = LogWriter::new(log_dir, "test-process", 1).await.unwrap();
-        
+
         writer.write_stdout(b"Line 1").await.unwrap();
         writer.write_stdout(b"Line 2").await.unwrap();
         writer.flush().await.unwrap();
 
-        let content = tokio::fs::read_to_string(writer.stdout_path()).await.unwrap();
+        let content = tokio::fs::read_to_string(writer.stdout_path())
+            .await
+            .unwrap();
         let lines: Vec<&str> = content.lines().collect();
-        
+
         assert_eq!(lines.len(), 2);
         // Each line should start with a timestamp in brackets
         for line in lines {
@@ -390,11 +400,11 @@ mod tests {
         let log_dir = temp_dir.path();
 
         let mut writer = LogWriter::new(log_dir, "test-process", 1).await.unwrap();
-        
+
         let initial_size = writer.stdout_size();
         writer.write_stdout(b"Test data").await.unwrap();
         writer.flush().await.unwrap();
-        
+
         assert!(writer.stdout_size() > initial_size);
     }
 }

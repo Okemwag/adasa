@@ -1,19 +1,15 @@
-mod config;
-mod error;
-mod ipc;
-mod logs;
-mod process;
-mod state;
+// Module imports for daemon_core
+// These are used within the daemon_core module below
 
 // Daemon core module
 mod daemon_core {
-    use crate::config::ProcessConfig;
-    use crate::error::{AdasaError, Result};
-    use crate::ipc::protocol::{Command, ProcessId, ProcessInfo, Response, ResponseData};
-    use crate::ipc::server::IpcServer;
-    use crate::logs::LogManager;
-    use crate::process::{ProcessManager, ProcessState as ProcState};
-    use crate::state::{DaemonState, PersistedProcess, StateStore};
+    use adasa::config::ProcessConfig;
+    use adasa::error::{AdasaError, Result};
+    use adasa::ipc::protocol::{Command, ProcessId, ProcessInfo, Response, ResponseData};
+    use adasa::ipc::server::IpcServer;
+    use adasa::logs::LogManager;
+    use adasa::process::{ProcessManager, ProcessState as ProcState};
+    use adasa::state::{DaemonState, PersistedProcess, StateStore};
     use std::path::Path;
     use std::sync::Arc;
     use std::time::SystemTime;
@@ -77,8 +73,11 @@ mod daemon_core {
 
             // Restore processes from state
             if !state.processes.is_empty() {
-                println!("Restoring {} processes from previous state...", state.processes.len());
-                
+                println!(
+                    "Restoring {} processes from previous state...",
+                    state.processes.len()
+                );
+
                 for persisted in state.processes {
                     // Convert persisted process to config
                     let config = ProcessConfig {
@@ -93,7 +92,7 @@ mod daemon_core {
                         restart_delay_secs: 1,
                         max_memory: None,
                         max_cpu: None,
-                        limit_action: crate::config::LimitAction::Log,
+                        limit_action: adasa::config::LimitAction::Log,
                         stop_signal: "SIGTERM".to_string(),
                         stop_timeout_secs: 10,
                     };
@@ -112,7 +111,10 @@ mod daemon_core {
 
             // Start IPC server
             self.ipc_server.start()?;
-            println!("IPC server listening on: {}", self.ipc_server.socket_path().display());
+            println!(
+                "IPC server listening on: {}",
+                self.ipc_server.socket_path().display()
+            );
 
             Ok(())
         }
@@ -153,13 +155,13 @@ mod daemon_core {
             let lm = Arc::clone(&log_manager);
 
             let server_handle = tokio::spawn(async move {
-                let result = ipc_server.run(move |cmd| {
-                    let pm = Arc::clone(&pm);
-                    let lm = Arc::clone(&lm);
-                    async move {
-                        Self::handle_command(cmd, pm, lm, start_time).await
-                    }
-                }).await;
+                let result = ipc_server
+                    .run(move |cmd| {
+                        let pm = Arc::clone(&pm);
+                        let lm = Arc::clone(&lm);
+                        async move { Self::handle_command(cmd, pm, lm, start_time).await }
+                    })
+                    .await;
 
                 if let Err(e) = result {
                     eprintln!("IPC server error: {}", e);
@@ -192,7 +194,8 @@ mod daemon_core {
             match command {
                 Command::Start(options) => {
                     let base_name = options.name.unwrap_or_else(|| {
-                        options.script
+                        options
+                            .script
                             .file_stem()
                             .and_then(|s| s.to_str())
                             .unwrap_or("process")
@@ -200,7 +203,7 @@ mod daemon_core {
                     });
 
                     let instances = options.instances;
-                    
+
                     // Spawn multiple instances if requested
                     let mut pm = process_manager.write().await;
                     let mut lm = log_manager.write().await;
@@ -227,7 +230,7 @@ mod daemon_core {
                             restart_delay_secs: 1,
                             max_memory: None,
                             max_cpu: None,
-                            limit_action: crate::config::LimitAction::Log,
+                            limit_action: adasa::config::LimitAction::Log,
                             stop_signal: "SIGTERM".to_string(),
                             stop_timeout_secs: 10,
                         };
@@ -236,15 +239,29 @@ mod daemon_core {
                         match pm.spawn(config).await {
                             Ok(id) => {
                                 // Create logger for the process
-                                if let Err(e) = lm.create_logger(id.as_u64(), &instance_name).await {
-                                    eprintln!("Failed to create logger for {}: {}", instance_name, e);
+                                if let Err(e) = lm.create_logger(id.as_u64(), &instance_name).await
+                                {
+                                    eprintln!(
+                                        "Failed to create logger for {}: {}",
+                                        instance_name, e
+                                    );
                                     continue;
                                 }
 
                                 // Capture logs from the process
                                 if let Some(process) = pm.get_mut(id) {
-                                    if let Err(e) = lm.capture_logs(id.as_u64(), &instance_name, &mut process.child).await {
-                                        eprintln!("Failed to capture logs for {}: {}", instance_name, e);
+                                    if let Err(e) = lm
+                                        .capture_logs(
+                                            id.as_u64(),
+                                            &instance_name,
+                                            &mut process.child,
+                                        )
+                                        .await
+                                    {
+                                        eprintln!(
+                                            "Failed to capture logs for {}: {}",
+                                            instance_name, e
+                                        );
                                     }
                                 }
 
@@ -259,9 +276,10 @@ mod daemon_core {
 
                     // Return success if at least one instance was spawned
                     if spawned_ids.is_empty() {
-                        return Err(AdasaError::SpawnError(
-                            format!("Failed to spawn any instances of {}", base_name),
-                        ));
+                        return Err(AdasaError::SpawnError(format!(
+                            "Failed to spawn any instances of {}",
+                            base_name
+                        )));
                     }
 
                     // Return the first ID and base name
@@ -274,7 +292,10 @@ mod daemon_core {
 
                     Ok(Response::success(
                         0,
-                        ResponseData::Started { id, name: response_name },
+                        ResponseData::Started {
+                            id,
+                            name: response_name,
+                        },
                     ))
                 }
 
@@ -294,7 +315,9 @@ mod daemon_core {
                     if options.rolling {
                         // Perform rolling restart
                         let health_check_delay = std::time::Duration::from_secs(3);
-                        let count = pm.rolling_restart(&options.target, health_check_delay).await?;
+                        let count = pm
+                            .rolling_restart(&options.target, health_check_delay)
+                            .await?;
 
                         Ok(Response::success(
                             0,
@@ -309,18 +332,15 @@ mod daemon_core {
                             ProcessId::new(id_num)
                         } else {
                             // Find by name
-                            let process = pm
-                                .find_by_name(&options.target)
-                                .ok_or_else(|| AdasaError::ProcessNotFound(options.target.clone()))?;
+                            let process = pm.find_by_name(&options.target).ok_or_else(|| {
+                                AdasaError::ProcessNotFound(options.target.clone())
+                            })?;
                             process.id
                         };
 
                         pm.restart(id).await?;
 
-                        Ok(Response::success(
-                            0,
-                            ResponseData::Restarted { id },
-                        ))
+                        Ok(Response::success(0, ResponseData::Restarted { id }))
                     }
                 }
 
@@ -331,7 +351,7 @@ mod daemon_core {
                     let process_list: Vec<ProcessInfo> = processes
                         .iter()
                         .map(|p| {
-                            let stats = crate::ipc::protocol::ProcessStats {
+                            let stats = adasa::ipc::protocol::ProcessStats {
                                 pid: Some(p.stats.pid),
                                 uptime: p.stats.uptime(),
                                 restarts: p.stats.restarts,
@@ -341,21 +361,11 @@ mod daemon_core {
                             };
 
                             let state = match p.state {
-                                ProcState::Starting => {
-                                    crate::ipc::protocol::ProcessState::Starting
-                                }
-                                ProcState::Running => {
-                                    crate::ipc::protocol::ProcessState::Running
-                                }
-                                ProcState::Stopping => {
-                                    crate::ipc::protocol::ProcessState::Stopping
-                                }
-                                ProcState::Stopped => {
-                                    crate::ipc::protocol::ProcessState::Stopped
-                                }
-                                ProcState::Errored => {
-                                    crate::ipc::protocol::ProcessState::Errored
-                                }
+                                ProcState::Starting => adasa::ipc::protocol::ProcessState::Starting,
+                                ProcState::Running => adasa::ipc::protocol::ProcessState::Running,
+                                ProcState::Stopping => adasa::ipc::protocol::ProcessState::Stopping,
+                                ProcState::Stopped => adasa::ipc::protocol::ProcessState::Stopped,
+                                ProcState::Errored => adasa::ipc::protocol::ProcessState::Errored,
                             };
 
                             ProcessInfo {
@@ -367,7 +377,10 @@ mod daemon_core {
                         })
                         .collect();
 
-                    Ok(Response::success(0, ResponseData::ProcessList(process_list)))
+                    Ok(Response::success(
+                        0,
+                        ResponseData::ProcessList(process_list),
+                    ))
                 }
 
                 Command::Logs(options) => {
@@ -386,7 +399,7 @@ mod daemon_core {
                         ))
                     } else {
                         // Read last N lines
-                        let log_options = crate::logs::LogReadOptions {
+                        let log_options = adasa::logs::LogReadOptions {
                             lines: options.lines.unwrap_or(100),
                             include_stderr: true,
                             include_stdout: true,
@@ -397,10 +410,8 @@ mod daemon_core {
                             .read_logs(options.id.as_u64(), &process.name, &log_options)
                             .await?;
 
-                        let log_lines: Vec<String> = entries
-                            .iter()
-                            .map(|entry| entry.format())
-                            .collect();
+                        let log_lines: Vec<String> =
+                            entries.iter().map(|entry| entry.format()).collect();
 
                         Ok(Response::success(0, ResponseData::Logs(log_lines)))
                     }
@@ -430,7 +441,7 @@ mod daemon_core {
                 }
 
                 Command::Daemon(daemon_cmd) => {
-                    use crate::ipc::protocol::DaemonCommand;
+                    use adasa::ipc::protocol::DaemonCommand;
 
                     match daemon_cmd {
                         DaemonCommand::Status => {
@@ -453,12 +464,10 @@ mod daemon_core {
                                 ResponseData::Success("Shutdown initiated".to_string()),
                             ))
                         }
-                        DaemonCommand::Start => {
-                            Ok(Response::success(
-                                0,
-                                ResponseData::Success("Daemon already running".to_string()),
-                            ))
-                        }
+                        DaemonCommand::Start => Ok(Response::success(
+                            0,
+                            ResponseData::Success("Daemon already running".to_string()),
+                        )),
                     }
                 }
             }
@@ -580,23 +589,13 @@ mod daemon_core {
                     cwd: p.config.cwd.clone(),
                     env: p.config.env.clone(),
                     state: match p.state {
-                        ProcState::Starting => {
-                            crate::ipc::protocol::ProcessState::Starting
-                        }
-                        ProcState::Running => {
-                            crate::ipc::protocol::ProcessState::Running
-                        }
-                        ProcState::Stopping => {
-                            crate::ipc::protocol::ProcessState::Stopping
-                        }
-                        ProcState::Stopped => {
-                            crate::ipc::protocol::ProcessState::Stopped
-                        }
-                        ProcState::Errored => {
-                            crate::ipc::protocol::ProcessState::Errored
-                        }
+                        ProcState::Starting => adasa::ipc::protocol::ProcessState::Starting,
+                        ProcState::Running => adasa::ipc::protocol::ProcessState::Running,
+                        ProcState::Stopping => adasa::ipc::protocol::ProcessState::Stopping,
+                        ProcState::Stopped => adasa::ipc::protocol::ProcessState::Stopped,
+                        ProcState::Errored => adasa::ipc::protocol::ProcessState::Errored,
                     },
-                    stats: crate::ipc::protocol::ProcessStats {
+                    stats: adasa::ipc::protocol::ProcessStats {
                         pid: Some(p.stats.pid),
                         uptime: p.stats.uptime(),
                         restarts: p.stats.restarts,
@@ -620,7 +619,7 @@ mod daemon_core {
         /// Helper method to spawn a process (used during initialization)
         async fn spawn_process(&self, config: ProcessConfig) -> Result<ProcessId> {
             let name = config.name.clone();
-            
+
             let mut pm = self.process_manager.write().await;
             let id = pm.spawn(config).await?;
 
@@ -630,7 +629,8 @@ mod daemon_core {
 
             // Capture logs
             if let Some(process) = pm.get_mut(id) {
-                lm.capture_logs(id.as_u64(), &name, &mut process.child).await?;
+                lm.capture_logs(id.as_u64(), &name, &mut process.child)
+                    .await?;
             }
 
             Ok(id)
@@ -639,13 +639,40 @@ mod daemon_core {
 }
 
 use daemon_core::Daemon;
-use error::Result;
+use std::env;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> adasa::error::Result<()> {
+    use adasa::daemon::{daemonize, DaemonManager};
+
+    // Check if we should daemonize
+    let should_daemonize = env::args().any(|arg| arg == "--daemonize");
+
+    if should_daemonize {
+        // Daemonize the process
+        daemonize()?;
+    }
+
+    // Create daemon manager
+    let daemon_manager = DaemonManager::new();
+
+    // Register daemon (write PID file)
+    daemon_manager.register_daemon()?;
+
+    // Setup cleanup on exit
+    let daemon_manager_clone = DaemonManager::new();
+    ctrlc::set_handler(move || {
+        let _ = daemon_manager_clone.unregister_daemon();
+        std::process::exit(0);
+    })
+    .ok();
+
     // Create and start the daemon
     let daemon = Daemon::new().await?;
-    daemon.start().await?;
-    
-    Ok(())
+    let result = daemon.start().await;
+
+    // Unregister daemon on exit
+    daemon_manager.unregister_daemon()?;
+
+    result
 }

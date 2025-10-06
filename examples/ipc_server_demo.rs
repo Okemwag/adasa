@@ -55,16 +55,15 @@ async fn main() -> Result<()> {
             }
             Command::Stop(opts) => {
                 println!("Stopping process: {}", opts.id);
-                Ok(Response::success(
-                    1,
-                    ResponseData::Stopped { id: opts.id },
-                ))
+                Ok(Response::success(1, ResponseData::Stopped { id: opts.id }))
             }
             Command::Restart(opts) => {
                 println!("Restarting process: {}", opts.target);
                 Ok(Response::success(
                     1,
-                    ResponseData::Restarted { id: ProcessId::new(1) },
+                    ResponseData::Restarted {
+                        id: ProcessId::new(1),
+                    },
                 ))
             }
             _ => Ok(Response::success(

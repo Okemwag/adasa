@@ -13,7 +13,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "adasa-daemon"
-path = "src/daemon.rs"
+path = "src/bin/adasa-daemon.rs"
 
 [dependencies]
 tokio = { version = "1.41", features = ["full"] }
@@ -27,6 +27,10 @@ sysinfo = "0.32"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = "0.4"
+tabled = "0.16"
+colored = "2.1"
+indicatif = "0.17"
+ctrlc = "3.4"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process", "resource"] }

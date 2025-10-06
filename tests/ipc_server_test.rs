@@ -32,7 +32,10 @@ fn test_server_client_communication() {
                             stats: ProcessStats::default(),
                         }]),
                     )),
-                    _ => Ok(Response::success(1, ResponseData::Success("OK".to_string()))),
+                    _ => Ok(Response::success(
+                        1,
+                        ResponseData::Success("OK".to_string()),
+                    )),
                 }
             })
             .expect("Failed to handle connection");
@@ -120,7 +123,10 @@ fn test_server_multiple_connections() {
             let stream = server.accept().expect("Failed to accept connection");
             server
                 .handle_connection(stream, |_command| {
-                    Ok(Response::success(1, ResponseData::Success("OK".to_string())))
+                    Ok(Response::success(
+                        1,
+                        ResponseData::Success("OK".to_string()),
+                    ))
                 })
                 .expect("Failed to handle connection");
         }

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 #[tokio::test]
 async fn test_resource_limits_creation() {
     let limits = ResourceLimits::new(Some(1024 * 1024 * 100), Some(50));
-    
+
     assert_eq!(limits.max_memory, Some(1024 * 1024 * 100));
     assert_eq!(limits.max_cpu, Some(50));
     assert!(limits.has_cpu_limit());
@@ -26,7 +26,7 @@ async fn test_process_config_with_resource_limits() {
         max_restarts: 10,
         restart_delay_secs: 1,
         max_memory: Some(1024 * 1024 * 512), // 512MB
-        max_cpu: Some(75),                    // 75%
+        max_cpu: Some(75),                   // 75%
         limit_action: LimitAction::Restart,
         stop_signal: "SIGTERM".to_string(),
         stop_timeout_secs: 10,
@@ -102,7 +102,7 @@ async fn test_process_stats_violation_tracking() {
     use adasa::process::ProcessStats;
 
     let mut stats = ProcessStats::new(1234);
-    
+
     assert_eq!(stats.memory_violations, 0);
     assert_eq!(stats.cpu_violations, 0);
 

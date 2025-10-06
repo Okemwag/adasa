@@ -41,9 +41,8 @@ impl IpcServer {
         }
 
         // Bind to the Unix socket
-        let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
-            AdasaError::IpcError(format!("Failed to bind to socket: {}", e))
-        })?;
+        let listener = UnixListener::bind(&self.socket_path)
+            .map_err(|e| AdasaError::IpcError(format!("Failed to bind to socket: {}", e)))?;
 
         // Set socket permissions to be accessible only by owner (0600)
         #[cfg(unix)]

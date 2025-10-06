@@ -91,7 +91,12 @@ pub struct ManagedProcess {
 }
 
 impl ManagedProcess {
-    pub fn new(id: ProcessId, name: String, config: ProcessConfig, spawned: SpawnedProcess) -> Self {
+    pub fn new(
+        id: ProcessId,
+        name: String,
+        config: ProcessConfig,
+        spawned: SpawnedProcess,
+    ) -> Self {
         let restart_policy = RestartPolicy::from_config(
             config.autorestart,
             config.max_restarts,
@@ -99,7 +104,9 @@ impl ManagedProcess {
         );
 
         let cgroup_manager = if config.max_cpu.is_some() {
-            Some(crate::process::limits::cgroup::CGroupManager::new(name.clone()))
+            Some(crate::process::limits::cgroup::CGroupManager::new(
+                name.clone(),
+            ))
         } else {
             None
         };

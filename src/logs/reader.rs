@@ -195,13 +195,11 @@ pub async fn read_logs(
     }
 
     // Sort by timestamp if available (simple lexicographic sort works for ISO format)
-    all_entries.sort_by(|a, b| {
-        match (&a.timestamp, &b.timestamp) {
-            (Some(ts_a), Some(ts_b)) => ts_a.cmp(ts_b),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }
+    all_entries.sort_by(|a, b| match (&a.timestamp, &b.timestamp) {
+        (Some(ts_a), Some(ts_b)) => ts_a.cmp(ts_b),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
     });
 
     // Limit to requested number of lines
@@ -355,9 +353,9 @@ impl LogTailer {
                 return Ok(None);
             }
 
-            let file = File::open(&self.path).await.map_err(|e| {
-                AdasaError::LogFileError(format!("Failed to open log file: {}", e))
-            })?;
+            let file = File::open(&self.path)
+                .await
+                .map_err(|e| AdasaError::LogFileError(format!("Failed to open log file: {}", e)))?;
 
             let mut reader = BufReader::new(file);
 
@@ -390,7 +388,10 @@ impl LogTailer {
                     // Error reading - file may have been rotated
                     // Reset reader to try reopening
                     self.reader = None;
-                    Err(AdasaError::LogError(format!("Failed to read log line: {}", e)))
+                    Err(AdasaError::LogError(format!(
+                        "Failed to read log line: {}",
+                        e
+                    )))
                 }
             }
         } else {
@@ -474,10 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_entry_parse() {
-        let entry = LogEntry::parse(
-            "[2024-01-01 10:00:00.000] Test message",
-            LogSource::Stdout,
-        );
+        let entry = LogEntry::parse("[2024-01-01 10:00:00.000] Test message", LogSource::Stdout);
         assert_eq!(entry.timestamp, Some("2024-01-01 10:00:00.000".to_string()));
         assert_eq!(entry.message, "Test message");
         assert_eq!(entry.source, LogSource::Stdout);
@@ -578,16 +576,9 @@ mod tests {
         drop(file);
 
         // Create stream
-        let mut stream = LogStream::new(
-            log_dir.clone(),
-            "test".to_string(),
-            1,
-            true,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
+        let mut stream = LogStream::new(log_dir.clone(), "test".to_string(), 1, true, false, None)
+            .await
+            .unwrap();
 
         // Append new line to log file
         let mut file = tokio::fs::OpenOptions::new()

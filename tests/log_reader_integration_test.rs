@@ -47,7 +47,10 @@ async fn test_read_logs_integration() {
         filter: None,
     };
 
-    let entries = log_manager.read_logs(1, "test-echo", &options).await.unwrap();
+    let entries = log_manager
+        .read_logs(1, "test-echo", &options)
+        .await
+        .unwrap();
 
     // Verify we got both stdout and stderr entries
     assert!(entries.len() >= 2, "Expected at least 2 log entries");
@@ -93,7 +96,10 @@ async fn test_read_logs_with_filter() {
         filter: Some("ERROR".to_string()),
     };
 
-    let entries = log_manager.read_logs(2, "test-filter", &options).await.unwrap();
+    let entries = log_manager
+        .read_logs(2, "test-filter", &options)
+        .await
+        .unwrap();
 
     // Should only get the ERROR line
     assert!(entries.len() >= 1, "Expected at least 1 filtered entry");
@@ -134,8 +140,7 @@ async fn test_log_stream_integration() {
     // Read entries from stream with timeout
     let mut entries = Vec::new();
     for _ in 0..3 {
-        if let Ok(Some(entry)) = tokio::time::timeout(Duration::from_secs(2), stream.next()).await
-        {
+        if let Ok(Some(entry)) = tokio::time::timeout(Duration::from_secs(2), stream.next()).await {
             entries.push(entry);
         }
     }
@@ -183,7 +188,10 @@ async fn test_read_logs_stdout_only() {
         filter: None,
     };
 
-    let entries = log_manager.read_logs(4, "test-stdout", &options).await.unwrap();
+    let entries = log_manager
+        .read_logs(4, "test-stdout", &options)
+        .await
+        .unwrap();
 
     // Should only have stdout entries
     assert!(
@@ -226,7 +234,10 @@ async fn test_read_logs_last_n_lines() {
         filter: None,
     };
 
-    let entries = log_manager.read_logs(5, "test-lines", &options).await.unwrap();
+    let entries = log_manager
+        .read_logs(5, "test-lines", &options)
+        .await
+        .unwrap();
 
     // Should have at most 3 entries
     assert!(

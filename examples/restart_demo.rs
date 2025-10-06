@@ -19,8 +19,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cwd: None,
         env: std::collections::HashMap::new(),
         instances: 1,
-        autorestart: true, // Enable automatic restart
-        max_restarts: 10,  // Max 10 restarts in 60 seconds
+        autorestart: true,     // Enable automatic restart
+        max_restarts: 10,      // Max 10 restarts in 60 seconds
         restart_delay_secs: 1, // Initial delay of 1 second
         max_memory: None,
         max_cpu: None,

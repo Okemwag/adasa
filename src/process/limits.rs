@@ -76,9 +76,7 @@ pub mod cgroup {
     impl CGroupManager {
         /// Create a new cgroup manager for a process
         pub fn new(process_name: String) -> Self {
-            let cgroup_path = PathBuf::from(CGROUP_BASE)
-                .join("adasa")
-                .join(&process_name);
+            let cgroup_path = PathBuf::from(CGROUP_BASE).join("adasa").join(&process_name);
 
             Self {
                 cgroup_path,
@@ -171,10 +169,7 @@ pub mod cgroup {
             // Move process back to root cgroup
             let root_procs = PathBuf::from(CGROUP_BASE).join("cgroup.procs");
             if let Err(e) = fs::write(&root_procs, pid.to_string()) {
-                warn!(
-                    "Failed to remove process {} from cgroup: {}",
-                    pid, e
-                );
+                warn!("Failed to remove process {} from cgroup: {}", pid, e);
             }
 
             Ok(())
@@ -184,10 +179,7 @@ pub mod cgroup {
         pub fn cleanup(&self) -> Result<()> {
             if self.cgroup_path.exists() {
                 if let Err(e) = fs::remove_dir(&self.cgroup_path) {
-                    warn!(
-                        "Failed to remove cgroup for {}: {}",
-                        self.process_name, e
-                    );
+                    warn!("Failed to remove cgroup for {}: {}", self.process_name, e);
                 }
             }
             Ok(())

@@ -1,13 +1,12 @@
 // CLI module - User-facing command-line interface
 
 mod commands;
-mod output;
+pub mod output;
 
 use crate::error::{AdasaError, Result};
 use crate::ipc::client::IpcClient;
 use crate::ipc::protocol::{
-    Command, DaemonCommand, DeleteOptions, LogOptions, ProcessId, RestartOptions, StartOptions,
-    StopOptions,
+    Command, DeleteOptions, LogOptions, ProcessId, RestartOptions, StartOptions, StopOptions,
 };
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
@@ -71,7 +70,11 @@ enum Commands {
     },
 
     /// List all managed processes
-    List,
+    List {
+        /// Show detailed information for each process
+        #[arg(short, long)]
+        detailed: bool,
+    },
 
     /// View process logs
     Logs {
@@ -119,22 +122,162 @@ impl Cli {
 
     /// Execute the parsed command
     fn execute(&self) -> Result<()> {
+        // Handle daemon commands specially (they don't require IPC)
+        if let Commands::Daemon { command } = &self.command {
+            return self.handle_daemon_command(command);
+        }
+
+        // Check if this is a long-running operation
+        let is_long_operation = matches!(
+            &self.command,
+            Commands::Start { .. } | Commands::Restart { .. }
+        );
+
+        // Show progress indicator for long operations
+        let progress = if is_long_operation {
+            Some(output::create_progress_bar("Processing..."))
+        } else {
+            None
+        };
+
         // Convert CLI command to IPC command
         let command = self.build_command()?;
 
         // Create IPC client and send command
         let client = IpcClient::new();
-        let response = client.send_command(command)?;
+        let response = client.send_command(command);
+
+        // Clear progress indicator
+        if let Some(pb) = progress {
+            match &response {
+                Ok(_) => output::finish_progress_success(pb, "Done"),
+                Err(_) => output::finish_progress_error(pb, "Failed"),
+            }
+        }
 
         // Handle the response
-        match response.result {
-            Ok(data) => {
-                output::print_success(&data);
+        match response {
+            Ok(response) => match response.result {
+                Ok(data) => {
+                    // Check if we need detailed output
+                    let show_detailed =
+                        matches!(&self.command, Commands::List { detailed } if *detailed);
+
+                    if show_detailed {
+                        if let crate::ipc::protocol::ResponseData::ProcessList(processes) = &data {
+                            for process in processes {
+                                output::print_detailed_status(process);
+                            }
+                        } else {
+                            output::print_success(&data);
+                        }
+                    } else {
+                        output::print_success(&data);
+                    }
+                    Ok(())
+                }
+                Err(error_msg) => {
+                    output::print_error(&error_msg);
+                    Err(AdasaError::Other(error_msg))
+                }
+            },
+            Err(e) => {
+                output::print_error(&e.to_string());
+                Err(e)
+            }
+        }
+    }
+
+    /// Handle daemon management commands
+    fn handle_daemon_command(&self, command: &DaemonCommands) -> Result<()> {
+        use crate::daemon::DaemonManager;
+        use std::process::Command;
+
+        let manager = DaemonManager::new();
+
+        match command {
+            DaemonCommands::Start => {
+                // Check if daemon is already running
+                if manager.is_running() {
+                    output::print_info("Daemon is already running");
+                    return Ok(());
+                }
+
+                output::print_info("Starting daemon...");
+
+                // Get the path to the daemon binary
+                let daemon_binary = std::env::current_exe()
+                    .map_err(|e| {
+                        AdasaError::Other(format!("Failed to get current executable: {}", e))
+                    })?
+                    .parent()
+                    .ok_or_else(|| {
+                        AdasaError::Other("Failed to get executable directory".to_string())
+                    })?
+                    .join("adasa-daemon");
+
+                // Check if daemon binary exists
+                if !daemon_binary.exists() {
+                    return Err(AdasaError::Other(format!(
+                        "Daemon binary not found at: {}",
+                        daemon_binary.display()
+                    )));
+                }
+
+                // Spawn the daemon process with --daemonize flag
+                let _child = Command::new(&daemon_binary)
+                    .arg("--daemonize")
+                    .spawn()
+                    .map_err(|e| AdasaError::Other(format!("Failed to start daemon: {}", e)))?;
+
+                // Wait a moment for daemon to start
+                std::thread::sleep(std::time::Duration::from_millis(500));
+
+                // Check if daemon is now running
+                if manager.is_running() {
+                    output::print_success_msg(&format!(
+                        "Daemon started successfully (PID: {})",
+                        manager.get_pid().unwrap()
+                    ));
+                    Ok(())
+                } else {
+                    Err(AdasaError::Other("Daemon failed to start".to_string()))
+                }
+            }
+
+            DaemonCommands::Stop => {
+                // Check if daemon is running
+                if !manager.is_running() {
+                    output::print_info("Daemon is not running");
+                    return Ok(());
+                }
+
+                output::print_info("Stopping daemon...");
+
+                // Stop the daemon with 10 second timeout
+                manager.stop_daemon(10)?;
+
+                output::print_success_msg("Daemon stopped successfully");
                 Ok(())
             }
-            Err(error_msg) => {
-                output::print_error(&error_msg);
-                Err(AdasaError::Other(error_msg))
+
+            DaemonCommands::Status => {
+                let status = manager.get_status();
+
+                if status.running {
+                    output::print_success_msg(&format!(
+                        "Daemon is running (PID: {})\nPID file: {}",
+                        status.pid.unwrap(),
+                        status.pid_file.display()
+                    ));
+                } else {
+                    output::print_info(&format!(
+                        "Daemon is not running\nPID file: {}",
+                        status.pid_file.display()
+                    ));
+                }
+
+                Ok(())
             }
         }
     }
@@ -173,7 +316,12 @@ impl Cli {
                 rolling: *rolling,
             })),
 
-            Commands::List => Ok(Command::List),
+            Commands::List { detailed } => {
+                // For now, we'll just use the List command
+                // The detailed flag can be used in future enhancements
+                let _ = detailed;
+                Ok(Command::List)
+            }
 
             Commands::Logs { id, lines, follow } => Ok(Command::Logs(LogOptions {
                 id: ProcessId::new(*id),
@@ -185,13 +333,9 @@ impl Cli {
                 id: ProcessId::new(*id),
             })),
 
-            Commands::Daemon { command } => {
-                let daemon_cmd = match command {
-                    DaemonCommands::Start => DaemonCommand::Start,
-                    DaemonCommands::Stop => DaemonCommand::Stop,
-                    DaemonCommands::Status => DaemonCommand::Status,
-                };
-                Ok(Command::Daemon(daemon_cmd))
+            Commands::Daemon { .. } => {
+                // Daemon commands are handled separately, not via IPC
+                unreachable!("Daemon commands should be handled by handle_daemon_command")
             }
         }
     }
