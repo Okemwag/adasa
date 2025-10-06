@@ -126,12 +126,14 @@ pub enum DaemonCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Command {
     Start(StartOptions),
+    StartFromConfig { config_path: PathBuf },
     Stop(StopOptions),
     Restart(RestartOptions),
     List,
     Logs(LogOptions),
     Delete(DeleteOptions),
     Daemon(DaemonCommand),
+    ReloadConfig { config_path: PathBuf },
 }
 
 /// Process information returned in responses

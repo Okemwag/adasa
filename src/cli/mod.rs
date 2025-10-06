@@ -26,7 +26,11 @@ enum Commands {
     /// Start a new process
     Start {
         /// Path to the script or executable to run
-        script: PathBuf,
+        script: Option<PathBuf>,
+
+        /// Path to configuration file (TOML or JSON)
+        #[arg(short = 'f', long, conflicts_with = "script")]
+        config: Option<PathBuf>,
 
         /// Name for the process (defaults to script name)
         #[arg(short, long)]
@@ -94,6 +98,12 @@ enum Commands {
     Delete {
         /// Process ID to delete
         id: u64,
+    },
+
+    /// Reload configuration file and start new processes
+    Reload {
+        /// Path to configuration file (TOML or JSON)
+        config: PathBuf,
     },
 
     /// Manage the daemon
@@ -287,12 +297,28 @@ impl Cli {
         match &self.command {
             Commands::Start {
                 script,
+                config,
                 name,
                 instances,
                 cwd,
                 env,
                 args,
             } => {
+                // Check if config file is provided
+                if let Some(config_path) = config {
+                    // Start from config file
+                    return Ok(Command::StartFromConfig {
+                        config_path: config_path.clone(),
+                    });
+                }
+
+                // Validate that script is provided if not using config
+                let script = script.as_ref().ok_or_else(|| {
+                    AdasaError::ConfigError(
+                        "Either --config or <script> must be provided".to_string(),
+                    )
+                })?;
+
                 // Parse environment variables
                 let env_map = parse_env_vars(env)?;
 
@@ -332,6 +358,10 @@ impl Cli {
             Commands::Delete { id } => Ok(Command::Delete(DeleteOptions {
                 id: ProcessId::new(*id),
             })),
+
+            Commands::Reload { config } => Ok(Command::ReloadConfig {
+                config_path: config.clone(),
+            }),
 
             Commands::Daemon { .. } => {
                 // Daemon commands are handled separately, not via IPC

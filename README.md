@@ -246,92 +246,121 @@ Restart the daemon (preserves managed processes).
 
 ## Configuration Files
 
-Adasa supports configuration files in TOML or JSON format for managing multiple processes declaratively.
+Adasa supports configuration files in TOML or JSON format for managing multiple processes declaratively. This makes it easy to define complex multi-process setups and deploy them with a single command.
 
-### TOML Configuration
+### Quick Start
+
+```bash
+# Start all processes from a config file
+adasa start --config config.toml
+
+# Or using short form
+adasa start -f config.json
+
+# Reload config to add new processes without stopping existing ones
+adasa reload config.toml
+```
+
+### TOML Configuration Example
 
 ```toml
 # config.toml
 
 [[processes]]
 name = "web-server"
-script = "./server.js"
-instances = 2
+script = "/usr/bin/node"
+args = ["server.js", "--port=3000"]
 cwd = "/var/www/app"
+instances = 4
 autorestart = true
 max_restarts = 10
-restart_delay = "5s"
+restart_delay_secs = 2
+max_memory = 536870912  # 512MB in bytes
+max_cpu = 80
+limit_action = "restart"
 
 [processes.env]
-PORT = "3000"
 NODE_ENV = "production"
-
-[processes.limits]
-max_memory = "512MB"
-stop_timeout = "30s"
+PORT = "3000"
 
 [[processes]]
 name = "worker"
-script = "./worker.js"
-instances = 4
+script = "/usr/bin/python3"
+args = ["worker.py"]
+cwd = "/var/www/app"
+instances = 2
 autorestart = true
+max_restarts = 5
+restart_delay_secs = 5
 
 [processes.env]
-QUEUE_URL = "redis://localhost:6379"
+PYTHON_ENV = "production"
+WORKER_THREADS = "4"
 ```
 
-### JSON Configuration
+### JSON Configuration Example
 
 ```json
 {
   "processes": [
     {
       "name": "api-server",
-      "script": "./api",
-      "instances": 4,
-      "cwd": "/opt/api",
+      "script": "/usr/bin/node",
+      "args": ["api.js"],
+      "cwd": "/var/www/api",
+      "instances": 2,
       "autorestart": true,
       "max_restarts": 10,
-      "restart_delay": "5s",
+      "restart_delay_secs": 1,
       "env": {
-        "PORT": "8080",
-        "DATABASE_URL": "postgres://localhost/mydb"
-      },
-      "limits": {
-        "max_memory": "1GB",
-        "stop_timeout": "30s"
+        "NODE_ENV": "production",
+        "API_PORT": "8080"
+      }
+    },
+    {
+      "name": "background-job",
+      "script": "/usr/bin/python3",
+      "args": ["job.py", "--interval=60"],
+      "cwd": "/var/www/jobs",
+      "instances": 1,
+      "autorestart": true,
+      "max_memory": 268435456,
+      "env": {
+        "PYTHON_ENV": "production"
       }
     }
   ]
 }
 ```
 
-### Using Configuration Files
-
-```bash
-# Start processes from config file
-adasa start --config config.toml
-
-# Reload configuration (updates without stopping)
-adasa reload --config config.toml
-```
-
 ### Configuration Options
 
 | Option | Type | Description | Default |
 |--------|------|-------------|---------|
-| `name` | string | Process name | Script filename |
-| `script` | string | Path to executable | Required |
+| `name` | string | Process name (required) | - |
+| `script` | string | Path to executable (required) | - |
 | `args` | array | Command-line arguments | `[]` |
-| `instances` | number | Number of instances | `1` |
+| `instances` | number | Number of instances (1-100) | `1` |
 | `cwd` | string | Working directory | Current directory |
 | `env` | object | Environment variables | `{}` |
 | `autorestart` | boolean | Enable automatic restart | `true` |
 | `max_restarts` | number | Max restarts in time window | `10` |
-| `restart_delay` | duration | Initial restart delay | `1s` |
-| `max_memory` | size | Memory limit | None |
-| `stop_signal` | string | Stop signal | `SIGTERM` |
-| `stop_timeout` | duration | Graceful stop timeout | `10s` |
+| `restart_delay_secs` | number | Delay before restart (seconds) | `1` |
+| `max_memory` | number | Memory limit in bytes | None |
+| `max_cpu` | number | CPU limit percentage (1-100) | None |
+| `limit_action` | string | Action on limit: "log", "restart", "stop" | `"log"` |
+| `stop_signal` | string | Stop signal (SIGTERM, SIGINT, etc.) | `"SIGTERM"` |
+| `stop_timeout_secs` | number | Graceful stop timeout (seconds) | `10` |
+
+### Features
+
+- **Environment Variable Expansion** - Use `$VAR` or `${VAR}` syntax in config values
+- **Validation** - Configs are validated before processes start
+- **Hot Reload** - Add new processes without stopping existing ones
+- **Multi-Instance** - Easily scale processes horizontally
+- **Resource Limits** - Set memory and CPU limits per process
+
+For complete documentation, see [Configuration Files Guide](docs/configuration-files.md).
 
 ## Comparison with PM2
 

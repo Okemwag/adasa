@@ -192,6 +192,149 @@ mod daemon_core {
             start_time: SystemTime,
         ) -> Result<Response> {
             match command {
+                Command::StartFromConfig { config_path } => {
+                    // Load and validate configuration file
+                    let configs = ProcessConfig::from_file(&config_path)?;
+
+                    let mut pm = process_manager.write().await;
+                    let mut lm = log_manager.write().await;
+                    let mut spawned_count = 0;
+                    let mut failed_count = 0;
+
+                    // Spawn all processes from config
+                    for config in configs {
+                        let instances = config.instances;
+                        let base_name = config.name.clone();
+
+                        for instance_num in 0..instances {
+                            // Generate unique name for each instance
+                            let instance_name = if instances > 1 {
+                                format!("{}-{}", base_name, instance_num)
+                            } else {
+                                base_name.clone()
+                            };
+
+                            // Create instance-specific config
+                            let mut instance_config = config.clone();
+                            instance_config.name = instance_name.clone();
+                            instance_config.instances = 1;
+
+                            // Spawn the process
+                            match pm.spawn(instance_config).await {
+                                Ok(id) => {
+                                    // Create logger for the process
+                                    if let Err(e) = lm.create_logger(id.as_u64(), &instance_name).await {
+                                        eprintln!("Failed to create logger for {}: {}", instance_name, e);
+                                        continue;
+                                    }
+
+                                    // Capture logs from the process
+                                    if let Some(process) = pm.get_mut(id) {
+                                        if let Err(e) = lm
+                                            .capture_logs(id.as_u64(), &instance_name, &mut process.child)
+                                            .await
+                                        {
+                                            eprintln!("Failed to capture logs for {}: {}", instance_name, e);
+                                        }
+                                    }
+
+                                    spawned_count += 1;
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to spawn {}: {}", instance_name, e);
+                                    failed_count += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    if spawned_count == 0 {
+                        return Err(AdasaError::SpawnError(
+                            "Failed to spawn any processes from config file".to_string(),
+                        ));
+                    }
+
+                    let message = if failed_count > 0 {
+                        format!(
+                            "Started {} processes from config ({} failed)",
+                            spawned_count, failed_count
+                        )
+                    } else {
+                        format!("Started {} processes from config", spawned_count)
+                    };
+
+                    Ok(Response::success(0, ResponseData::Success(message)))
+                }
+
+                Command::ReloadConfig { config_path } => {
+                    // Load and validate configuration file
+                    let configs = ProcessConfig::from_file(&config_path)?;
+
+                    let mut pm = process_manager.write().await;
+                    let mut lm = log_manager.write().await;
+                    let mut updated_count = 0;
+                    let mut added_count = 0;
+
+                    // Process each config
+                    for config in configs {
+                        let base_name = config.name.clone();
+                        
+                        // Check if process with this name already exists
+                        if pm.find_by_name(&base_name).is_some() {
+                            // Update existing process configuration without restarting
+                            // For now, we'll just track that we found it
+                            // In a full implementation, we'd update the config and optionally restart
+                            updated_count += 1;
+                            println!("Process {} already exists, configuration noted", base_name);
+                        } else {
+                            // Spawn new process
+                            let instances = config.instances;
+                            
+                            for instance_num in 0..instances {
+                                let instance_name = if instances > 1 {
+                                    format!("{}-{}", base_name, instance_num)
+                                } else {
+                                    base_name.clone()
+                                };
+
+                                let mut instance_config = config.clone();
+                                instance_config.name = instance_name.clone();
+                                instance_config.instances = 1;
+
+                                match pm.spawn(instance_config).await {
+                                    Ok(id) => {
+                                        if let Err(e) = lm.create_logger(id.as_u64(), &instance_name).await {
+                                            eprintln!("Failed to create logger for {}: {}", instance_name, e);
+                                            continue;
+                                        }
+
+                                        if let Some(process) = pm.get_mut(id) {
+                                            if let Err(e) = lm
+                                                .capture_logs(id.as_u64(), &instance_name, &mut process.child)
+                                                .await
+                                            {
+                                                eprintln!("Failed to capture logs for {}: {}", instance_name, e);
+                                            }
+                                        }
+
+                                        added_count += 1;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to spawn {}: {}", instance_name, e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let message = format!(
+                        "Config reloaded: {} processes added, {} existing processes found",
+                        added_count, updated_count
+                    );
+
+                    Ok(Response::success(0, ResponseData::Success(message)))
+                }
+
                 Command::Start(options) => {
                     let base_name = options.name.unwrap_or_else(|| {
                         options
