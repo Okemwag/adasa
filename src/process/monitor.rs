@@ -1,26 +1,55 @@
 use crate::error::Result;
 use crate::process::{ManagedProcess, ProcessState};
 use std::collections::HashMap;
-use sysinfo::{Pid, ProcessRefreshKind, System};
+use std::time::Instant;
+use sysinfo::{Pid, ProcessRefreshKind, System, RefreshKind};
 
-/// Process monitor for collecting resource usage statistics
+/// Process monitor for collecting resource usage statistics (optimized)
 pub struct ProcessMonitor {
     /// System information collector
     system: System,
     /// Cache of previous CPU measurements for accurate calculation
     cpu_cache: HashMap<u32, f32>,
+    /// Last refresh time to avoid excessive polling
+    last_refresh: Option<Instant>,
+    /// Minimum interval between full system refreshes (milliseconds)
+    refresh_interval_ms: u64,
 }
 
 impl ProcessMonitor {
-    /// Create a new process monitor
+    /// Create a new process monitor with default refresh interval (200ms)
     pub fn new() -> Self {
+        Self::with_refresh_interval(200)
+    }
+
+    /// Create a new process monitor with custom refresh interval
+    ///
+    /// # Arguments
+    /// * `refresh_interval_ms` - Minimum milliseconds between full system refreshes
+    pub fn with_refresh_interval(refresh_interval_ms: u64) -> Self {
+        // Initialize system with minimal refresh to reduce startup overhead
+        let system = System::new_with_specifics(
+            RefreshKind::new()
+                .with_processes(ProcessRefreshKind::new())
+        );
+        
         Self {
-            system: System::new_all(),
-            cpu_cache: HashMap::new(),
+            system,
+            cpu_cache: HashMap::with_capacity(64), // Pre-allocate for typical workload
+            last_refresh: None,
+            refresh_interval_ms,
         }
     }
 
-    /// Update statistics for a single managed process
+    /// Check if enough time has passed since last refresh
+    fn should_refresh(&self) -> bool {
+        match self.last_refresh {
+            None => true,
+            Some(last) => last.elapsed().as_millis() >= self.refresh_interval_ms as u128,
+        }
+    }
+
+    /// Update statistics for a single managed process (optimized)
     ///
     /// # Arguments
     /// * `process` - The managed process to update
@@ -32,19 +61,27 @@ impl ProcessMonitor {
         let pid = process.stats.pid;
         let sys_pid = Pid::from_u32(pid);
 
-        // Refresh specific process information
-        self.system.refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::Some(&[sys_pid]),
-            true,
-            ProcessRefreshKind::everything(),
-        );
+        // Only refresh if enough time has passed (rate limiting)
+        if self.should_refresh() {
+            // Refresh only CPU and memory for this specific process
+            self.system.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[sys_pid]),
+                true,
+                ProcessRefreshKind::new()
+                    .with_cpu()
+                    .with_memory(),
+            );
+            self.last_refresh = Some(Instant::now());
+        }
 
         // Get process information from sysinfo
         if let Some(sys_process) = self.system.process(sys_pid) {
             // Update CPU usage
             let cpu_usage = sys_process.cpu_usage();
             process.stats.cpu_usage = cpu_usage;
-            self.cpu_cache.insert(pid, cpu_usage);
+            
+            // Use entry API to avoid double lookup
+            *self.cpu_cache.entry(pid).or_insert(0.0) = cpu_usage;
 
             // Update memory usage (in bytes)
             process.stats.memory_usage = sys_process.memory();
@@ -59,7 +96,7 @@ impl ProcessMonitor {
         }
     }
 
-    /// Update statistics for multiple managed processes
+    /// Update statistics for multiple managed processes (optimized batch operation)
     ///
     /// # Arguments
     /// * `processes` - Iterator of mutable references to managed processes
@@ -70,24 +107,53 @@ impl ProcessMonitor {
     where
         I: Iterator<Item = &'a mut ManagedProcess>,
     {
-        // Refresh all processes at once for efficiency
-        self.system.refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::everything(),
-        );
+        // Only refresh if enough time has passed
+        if !self.should_refresh() {
+            return Ok(());
+        }
 
-        for process in processes {
-            // Only update stats for running processes
-            if process.state == ProcessState::Running {
-                let _ = self.update_process_stats(process);
+        // Collect PIDs of running processes to minimize allocations
+        let running_pids: Vec<Pid> = processes
+            .filter_map(|p| {
+                if p.state == ProcessState::Running {
+                    Some(Pid::from_u32(p.stats.pid))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if running_pids.is_empty() {
+            return Ok(());
+        }
+
+        // Batch refresh only the specific processes we're monitoring
+        // This is much more efficient than refreshing all system processes
+        self.system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&running_pids),
+            true,
+            ProcessRefreshKind::new()
+                .with_cpu()
+                .with_memory(),
+        );
+        
+        self.last_refresh = Some(Instant::now());
+
+        // Update stats from cached system data (no additional syscalls)
+        for pid in running_pids {
+            if let Some(sys_process) = self.system.process(pid) {
+                let pid_u32 = pid.as_u32();
+                let cpu_usage = sys_process.cpu_usage();
+                
+                // Update cache
+                *self.cpu_cache.entry(pid_u32).or_insert(0.0) = cpu_usage;
             }
         }
 
         Ok(())
     }
 
-    /// Check if a process is still alive in the system
+    /// Check if a process is still alive in the system (optimized)
     ///
     /// # Arguments
     /// * `pid` - Process ID to check
@@ -97,15 +163,18 @@ impl ProcessMonitor {
     /// * `false` - Process has exited or crashed
     pub fn is_process_alive(&mut self, pid: u32) -> bool {
         let sys_pid = Pid::from_u32(pid);
+        
+        // Minimal refresh - only check if process exists
         self.system.refresh_processes_specifics(
             sysinfo::ProcessesToUpdate::Some(&[sys_pid]),
             true,
-            ProcessRefreshKind::everything(),
+            ProcessRefreshKind::new(), // Empty refresh kind - just check existence
         );
+        
         self.system.process(sys_pid).is_some()
     }
 
-    /// Detect crashed processes and mark them as errored
+    /// Detect crashed processes and mark them as errored (optimized batch check)
     ///
     /// # Arguments
     /// * `processes` - Iterator of mutable references to managed processes
@@ -116,17 +185,38 @@ impl ProcessMonitor {
     where
         I: Iterator<Item = &'a mut ManagedProcess>,
     {
-        let mut crashed = Vec::new();
-
+        // Pre-allocate with reasonable capacity
+        let mut crashed = Vec::with_capacity(4);
+        
+        // Collect running process PIDs for batch check
+        let mut running_processes: Vec<(&mut ManagedProcess, Pid)> = Vec::with_capacity(16);
+        
         for process in processes {
-            // Only check running processes
             if process.state == ProcessState::Running {
                 let pid = process.stats.pid;
-                if !self.is_process_alive(pid) {
-                    process.mark_errored();
-                    self.cpu_cache.remove(&pid);
-                    crashed.push(pid);
-                }
+                running_processes.push((process, Pid::from_u32(pid)));
+            }
+        }
+
+        if running_processes.is_empty() {
+            return crashed;
+        }
+
+        // Batch refresh all running processes at once
+        let pids: Vec<Pid> = running_processes.iter().map(|(_, pid)| *pid).collect();
+        self.system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&pids),
+            true,
+            ProcessRefreshKind::new(), // Minimal refresh - just check existence
+        );
+
+        // Check which processes are no longer alive
+        for (process, sys_pid) in running_processes {
+            if self.system.process(sys_pid).is_none() {
+                let pid = process.stats.pid;
+                process.mark_errored();
+                self.cpu_cache.remove(&pid);
+                crashed.push(pid);
             }
         }
 

@@ -32,22 +32,22 @@ cargo install adasa
 
 ### From Binary
 
-Download the latest release for your platform from the [releases page](https://github.com/Okemwa/adasa/releases):
+Download the latest release for your platform from the [releases page](https://github.com/Okemwagg/adasa/releases):
 
 ```bash
 # Linux x86_64
-curl -L https://github.com/Okemwa/adasa/releases/latest/download/adasa-linux-x86_64.tar.gz | tar xz
+curl -L https://github.com/Okemwagg/adasa/releases/latest/download/adasa-linux-x86_64.tar.gz | tar xz
 sudo mv adasa /usr/local/bin/
 
 # macOS
-curl -L https://github.com/Okemwa/adasa/releases/latest/download/adasa-macos-x86_64.tar.gz | tar xz
+curl -L https://github.com/Okemwagg/adasa/releases/latest/download/adasa-macos-x86_64.tar.gz | tar xz
 sudo mv adasa /usr/local/bin/
 ```
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/Okemwa/adasa.git
+git clone https://github.com/Okemwagg/adasa.git
 cd adasa
 cargo build --release
 sudo cp target/release/adasa /usr/local/bin/
@@ -467,38 +467,89 @@ Benchmarks run on Ubuntu 22.04, Intel i7-10700K, 32GB RAM:
 
 ## Systemd Integration
 
-For production deployments, run Adasa as a systemd service:
+For production deployments, run Adasa as a systemd service to enable auto-start on boot and automatic restart on failure.
 
-### Service File
+### Quick Installation
 
-Create `/etc/systemd/system/adasa.service`:
+**User Service (Development):**
+```bash
+# Install for current user (no root required)
+./systemd/install.sh install-user
 
-```ini
-[Unit]
-Description=Adasa Process Manager
-After=network.target
+# Start the service
+systemctl --user start adasa
 
-[Service]
-Type=forking
-User=your-user
-Group=your-group
-ExecStart=/usr/local/bin/adasa daemon start
-ExecStop=/usr/local/bin/adasa daemon stop
-Restart=on-failure
-RestartSec=5s
-
-[Install]
-WantedBy=multi-user.target
+# Enable auto-start on login
+systemctl --user enable adasa
 ```
 
-### Enable and Start
+**System Service (Production):**
+```bash
+# Install system-wide (requires root)
+sudo ./systemd/install.sh install-system
+
+# Start the service
+sudo systemctl start adasa@yourusername
+
+# Enable auto-start on boot
+sudo systemctl enable adasa@yourusername
+```
+
+### Manual Installation
+
+**System Service:**
+```bash
+# Copy service file
+sudo cp systemd/adasa.service /etc/systemd/system/adasa@.service
+
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable and start for your user
+sudo systemctl enable adasa@yourusername
+sudo systemctl start adasa@yourusername
+
+# Check status
+sudo systemctl status adasa@yourusername
+```
+
+**User Service:**
+```bash
+# Copy service file
+mkdir -p ~/.config/systemd/user
+cp systemd/adasa-user.service ~/.config/systemd/user/adasa.service
+
+# Reload systemd
+systemctl --user daemon-reload
+
+# Enable and start
+systemctl --user enable adasa
+systemctl --user start adasa
+
+# Check status
+systemctl --user status adasa
+```
+
+### Features
+
+- ✅ Auto-start on system boot
+- ✅ Automatic restart on failure
+- ✅ Resource limits and security hardening
+- ✅ Integration with systemd logging (`journalctl`)
+- ✅ Graceful shutdown handling
+- ✅ Support for multiple user instances
+
+### View Logs
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable adasa
-sudo systemctl start adasa
-sudo systemctl status adasa
+# System service logs
+sudo journalctl -u adasa@yourusername -f
+
+# User service logs
+journalctl --user -u adasa -f
 ```
+
+For detailed systemd configuration, troubleshooting, and advanced options, see [systemd/README.md](systemd/README.md).
 
 ## Contributing
 
@@ -507,7 +558,7 @@ We welcome contributions! Here's how you can help:
 ### Getting Started
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/Okemwa/adasa.git`
+2. Clone your fork: `git clone https://github.com/Okemwagg/adasa.git`
 3. Create a feature branch: `git checkout -b feature/my-feature`
 4. Make your changes
 5. Run tests: `cargo test`
@@ -521,7 +572,7 @@ We welcome contributions! Here's how you can help:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Okemwa/adasa.git
+git clone https://github.com/Okemwagg/adasa.git
 cd adasa
 
 # Build the project
@@ -592,9 +643,9 @@ Dual licensing under MIT and Apache 2.0 provides:
 
 ## Support
 
-- 📖 [Documentation](https://github.com/Okemwa/adasa/wiki)
-- 🐛 [Issue Tracker](https://github.com/Okemwa/adasa/issues)
-- 💬 [Discussions](https://github.com/Okemwa/adasa/discussions)
+- 📖 [Documentation](https://github.com/Okemwagg/adasa/wiki)
+- 🐛 [Issue Tracker](https://github.com/Okemwagg/adasa/issues)
+- 💬 [Discussions](https://github.com/Okemwagg/adasa/discussions)
 
 ---
 

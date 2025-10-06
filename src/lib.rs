@@ -6,5 +6,6 @@ pub mod daemon;
 pub mod error;
 pub mod ipc;
 pub mod logs;
+pub mod perf;
 pub mod process;
 pub mod state;

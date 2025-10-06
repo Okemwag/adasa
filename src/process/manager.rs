@@ -1,6 +1,7 @@
 use crate::config::{LimitAction, ProcessConfig};
 use crate::error::{AdasaError, Result};
 use crate::ipc::protocol::ProcessId;
+use crate::perf::PerfTimer;
 use crate::process::monitor::ProcessMonitor;
 use crate::process::spawner::spawn_process;
 use crate::process::types::{ManagedProcess, ProcessState};
@@ -8,8 +9,6 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use std::collections::HashMap;
 use std::time::Duration;
-
-pub use crate::process::types::{ProcessState as ProcState, ProcessStats};
 
 pub struct ProcessManager {
     processes: HashMap<ProcessId, ManagedProcess>,
@@ -27,6 +26,8 @@ impl ProcessManager {
     }
 
     pub async fn spawn(&mut self, config: ProcessConfig) -> Result<ProcessId> {
+        let _timer = PerfTimer::with_threshold("spawn_process", 200);
+        
         if self.processes.values().any(|p| p.name == config.name) {
             return Err(AdasaError::ProcessAlreadyExists(config.name.clone()));
         }
@@ -197,20 +198,28 @@ impl ProcessManager {
     }
 
     pub fn update_stats(&mut self) -> Result<()> {
+        let _timer = PerfTimer::with_threshold("update_stats", 100);
         self.monitor.update_all_stats(self.processes.values_mut())
     }
 
     pub fn detect_crashes(&mut self) -> Vec<ProcessId> {
+        let _timer = PerfTimer::with_threshold("detect_crashes", 50);
         let crashed_pids = self.monitor.detect_crashes(self.processes.values_mut());
+
+        // Optimize lookup by building a PID->ProcessId map once
+        // instead of iterating for each crashed PID
+        if crashed_pids.is_empty() {
+            return Vec::new();
+        }
+
+        let pid_to_id: HashMap<u32, ProcessId> = self.processes
+            .iter()
+            .map(|(id, p)| (p.stats.pid, *id))
+            .collect();
 
         crashed_pids
             .into_iter()
-            .filter_map(|pid| {
-                self.processes
-                    .iter()
-                    .find(|(_, p)| p.stats.pid == pid)
-                    .map(|(id, _)| *id)
-            })
+            .filter_map(|pid| pid_to_id.get(&pid).copied())
             .collect()
     }
 

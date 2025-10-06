@@ -1,0 +1,29 @@
+[Unit]
+Description=Adasa Process Manager
+Documentation=https://github.com/Okemwag/adasa
+After=network.target
+
+[Service]
+Type=forking
+User=%i
+Group=%i
+ExecStart=/usr/local/bin/adasa daemon start
+ExecStop=/usr/local/bin/adasa daemon stop
+ExecReload=/usr/local/bin/adasa daemon restart
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/%i/.adasa /var/log/adasa
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
+use tokio::net::UnixStream as TokioUnixStream;
 
 /// Default socket path for daemon communication
 const DEFAULT_SOCKET_PATH: &str = "/tmp/adasa.sock";
@@ -116,17 +118,31 @@ impl IpcServer {
         Ok(())
     }
 
-    /// Run the server accept loop with an async handler
+    /// Run the server accept loop with an async handler (optimized)
     pub async fn run<F, Fut>(&self, handler: F) -> Result<()>
     where
         F: Fn(Command) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<Response>> + Send,
     {
         let handler = Arc::new(handler);
+        
+        // Set listener to non-blocking mode for async operations
+        let listener = self
+            .listener
+            .as_ref()
+            .ok_or_else(|| AdasaError::IpcError("Server not started".to_string()))?;
+        
+        listener.set_nonblocking(true)
+            .map_err(|e| AdasaError::IpcError(format!("Failed to set non-blocking: {}", e)))?;
+
+        // Convert to tokio listener
+        let tokio_listener = tokio::net::UnixListener::from_std(listener.try_clone()
+            .map_err(|e| AdasaError::IpcError(format!("Failed to clone listener: {}", e)))?)
+            .map_err(|e| AdasaError::IpcError(format!("Failed to convert listener: {}", e)))?;
 
         loop {
-            // Accept a connection
-            let stream = match self.accept() {
+            // Accept a connection asynchronously
+            let (stream, _) = match tokio_listener.accept().await {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("Failed to accept connection: {}", e);
@@ -139,60 +155,72 @@ impl IpcServer {
 
             // Spawn a task to handle this connection
             tokio::spawn(async move {
-                // Read the request
-                let request = match Self::read_request(&stream) {
-                    Ok(req) => req,
-                    Err(e) => {
-                        eprintln!("Failed to read request: {}", e);
-                        return;
-                    }
-                };
-
-                // Handle the command
-                let response = match handler(request.command).await {
-                    Ok(resp) => Response {
-                        id: request.id,
-                        result: resp.result,
-                    },
-                    Err(e) => Response::error(request.id, e.to_string()),
-                };
-
-                // Send the response
-                if let Err(e) = Self::write_response(stream, &response) {
-                    eprintln!("Failed to write response: {}", e);
+                if let Err(e) = Self::handle_connection_async(stream, handler).await {
+                    eprintln!("Connection handler error: {}", e);
                 }
             });
         }
     }
 
-    /// Read a request from a stream
-    fn read_request(stream: &UnixStream) -> Result<Request> {
-        let mut reader = BufReader::new(stream);
-        let mut request_line = String::new();
+    /// Handle a single connection asynchronously (optimized for performance)
+    async fn handle_connection_async<F, Fut>(
+        stream: TokioUnixStream,
+        handler: Arc<F>,
+    ) -> Result<()>
+    where
+        F: Fn(Command) -> Fut + Send + Sync,
+        Fut: std::future::Future<Output = Result<Response>> + Send,
+    {
+        // Use async buffered reader for efficient I/O
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = AsyncBufReader::new(reader);
+        
+        // Pre-allocate buffer to reduce allocations
+        let mut request_line = String::with_capacity(1024);
+        
+        // Read request line
         reader
             .read_line(&mut request_line)
+            .await
             .map_err(|e| AdasaError::IpcError(format!("Failed to read request: {}", e)))?;
 
-        serde_json::from_str(&request_line).map_err(|e| {
+        // Parse request (reuse buffer)
+        let request: Request = serde_json::from_str(&request_line).map_err(|e| {
             AdasaError::DeserializationError(format!("Failed to deserialize request: {}", e))
-        })
-    }
-
-    /// Write a response to a stream
-    fn write_response(mut stream: UnixStream, response: &Response) -> Result<()> {
-        let response_json = serde_json::to_string(response).map_err(|e| {
-            AdasaError::SerializationError(format!("Failed to serialize response: {}", e))
         })?;
 
-        writeln!(stream, "{}", response_json)
+        // Handle the command
+        let response = match handler(request.command).await {
+            Ok(resp) => Response {
+                id: request.id,
+                result: resp.result,
+            },
+            Err(e) => Response::error(request.id, e.to_string()),
+        };
+
+        // Serialize response (use to_vec for better performance)
+        let mut response_bytes = serde_json::to_vec(&response).map_err(|e| {
+            AdasaError::SerializationError(format!("Failed to serialize response: {}", e))
+        })?;
+        
+        // Add newline
+        response_bytes.push(b'\n');
+
+        // Write response asynchronously
+        writer
+            .write_all(&response_bytes)
+            .await
             .map_err(|e| AdasaError::IpcError(format!("Failed to write response: {}", e)))?;
 
-        stream
+        writer
             .flush()
+            .await
             .map_err(|e| AdasaError::IpcError(format!("Failed to flush stream: {}", e)))?;
 
         Ok(())
     }
+
+
 
     /// Stop the server and clean up the socket file
     pub fn stop(&mut self) -> Result<()> {

@@ -111,7 +111,8 @@ pub struct LogOptions {
 /// Options for deleting a process
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeleteOptions {
-    pub id: ProcessId,
+    /// Process ID or name to delete
+    pub target: String,
 }
 
 /// Daemon management commands

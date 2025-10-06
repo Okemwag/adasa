@@ -96,8 +96,8 @@ enum Commands {
 
     /// Delete a stopped process
     Delete {
-        /// Process ID to delete
-        id: u64,
+        /// Process ID or name to delete (deletes all instances if name is provided)
+        target: String,
     },
 
     /// Reload configuration file and start new processes
@@ -355,8 +355,8 @@ impl Cli {
                 follow: *follow,
             })),
 
-            Commands::Delete { id } => Ok(Command::Delete(DeleteOptions {
-                id: ProcessId::new(*id),
+            Commands::Delete { target } => Ok(Command::Delete(DeleteOptions {
+                target: target.clone(),
             })),
 
             Commands::Reload { config } => Ok(Command::ReloadConfig {

@@ -562,25 +562,73 @@ mod daemon_core {
 
                 Command::Delete(options) => {
                     let mut pm = process_manager.write().await;
+                    let mut lm = log_manager.write().await;
 
-                    // Stop the process first if it's running
-                    if let Some(process) = pm.get_status(options.id) {
-                        if process.state != ProcState::Stopped {
-                            pm.stop(options.id, true).await?;
+                    // Try to parse as ProcessId first, otherwise treat as name
+                    let processes_to_delete: Vec<(ProcessId, String)> = if let Ok(id_num) = options.target.parse::<u64>() {
+                        let id = ProcessId::new(id_num);
+                        // Single process by ID
+                        let process_name = pm
+                            .get_status(id)
+                            .map(|p| p.name.clone())
+                            .ok_or_else(|| AdasaError::ProcessNotFound(options.target.clone()))?;
+                        vec![(id, process_name)]
+                    } else {
+                        // All instances by name
+                        let instances = pm.find_all_by_name(&options.target);
+                        if instances.is_empty() {
+                            return Err(AdasaError::ProcessNotFound(options.target.clone()));
                         }
+                        instances.iter().map(|p| (p.id, p.name.clone())).collect()
+                    };
+
+                    let mut deleted_count = 0;
+                    let mut first_id = None;
+
+                    for (process_id, process_name) in processes_to_delete {
+                        if first_id.is_none() {
+                            first_id = Some(process_id);
+                        }
+
+                        // Stop the process first if it's running
+                        if let Some(process) = pm.get_status(process_id) {
+                            if process.state != ProcState::Stopped {
+                                if let Err(e) = pm.stop(process_id, true).await {
+                                    tracing::error!("Failed to stop process {} before deletion: {}", process_name, e);
+                                    continue;
+                                }
+                            }
+                        }
+
+                        // Remove from process manager
+                        if let Err(e) = pm.remove(process_id) {
+                            tracing::error!("Failed to remove process {}: {}", process_name, e);
+                            continue;
+                        }
+
+                        // Delete log files
+                        if let Err(e) = lm.delete_logs(process_id.as_u64(), &process_name).await {
+                            tracing::warn!("Failed to delete log files for process {}: {}", process_name, e);
+                        }
+
+                        deleted_count += 1;
+                        tracing::info!("Deleted process: {} (ID: {})", process_name, process_id);
                     }
 
-                    // Remove from process manager
-                    pm.remove(options.id)?;
+                    if deleted_count == 0 {
+                        return Err(AdasaError::Other(format!(
+                            "Failed to delete any processes matching '{}'",
+                            options.target
+                        )));
+                    }
 
-                    // Remove logger
-                    let mut lm = log_manager.write().await;
-                    let _ = lm.remove_logger(options.id.as_u64());
+                    let message = if deleted_count == 1 {
+                        ResponseData::Deleted { id: first_id.unwrap() }
+                    } else {
+                        ResponseData::Success(format!("Deleted {} processes", deleted_count))
+                    };
 
-                    Ok(Response::success(
-                        0,
-                        ResponseData::Deleted { id: options.id },
-                    ))
+                    Ok(Response::success(0, message))
                 }
 
                 Command::Daemon(daemon_cmd) => {
@@ -616,45 +664,65 @@ mod daemon_core {
             }
         }
 
-        /// Supervisor loop that monitors processes and handles auto-restart
+        /// Supervisor loop that monitors processes and handles auto-restart (optimized)
         async fn supervisor_loop(process_manager: Arc<RwLock<ProcessManager>>) {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+            // Use 500ms interval for faster crash detection while still being efficient
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+            // Skip first tick to avoid immediate execution
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 interval.tick().await;
 
+                // Use a shorter-lived write lock to reduce contention
+                let crashed = {
+                    let mut pm = process_manager.write().await;
+                    pm.detect_crashes()
+                };
+
+                // If no crashes, continue immediately without holding lock
+                if crashed.is_empty() {
+                    continue;
+                }
+
+                // Only acquire write lock again if we need to restart processes
                 let mut pm = process_manager.write().await;
-
-                // Detect crashed processes
-                let crashed = pm.detect_crashes();
-
+                
                 // Attempt to restart crashed processes
                 for process_id in crashed {
                     match pm.try_auto_restart(process_id).await {
                         Ok(true) => {
-                            println!("Auto-restarted process: {}", process_id);
+                            tracing::info!("Auto-restarted process: {}", process_id);
                         }
                         Ok(false) => {
-                            println!("Process {} not restarted (policy prevented it)", process_id);
+                            tracing::debug!("Process {} not restarted (policy prevented it)", process_id);
                         }
                         Err(e) => {
-                            eprintln!("Failed to auto-restart process {}: {}", process_id, e);
+                            tracing::error!("Failed to auto-restart process {}: {}", process_id, e);
                         }
                     }
                 }
             }
         }
 
-        /// Stats update loop that periodically updates process statistics
+        /// Stats update loop that periodically updates process statistics (optimized)
         async fn stats_update_loop(process_manager: Arc<RwLock<ProcessManager>>) {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+            // Use 2-second interval for more responsive stats while being efficient
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
+            // Skip missed ticks to avoid backlog if system is busy
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
                 interval.tick().await;
 
-                let mut pm = process_manager.write().await;
-                if let Err(e) = pm.update_stats() {
-                    eprintln!("Failed to update stats: {}", e);
+                // Use shorter-lived lock for stats update
+                let result = {
+                    let mut pm = process_manager.write().await;
+                    pm.update_stats()
+                };
+                
+                if let Err(e) = result {
+                    tracing::warn!("Failed to update stats: {}", e);
                 }
             }
         }

@@ -254,6 +254,60 @@ impl LogManager {
             .map(|_| ())
     }
 
+    /// Delete log files for a process
+    ///
+    /// This removes the logger and deletes all log files (stdout, stderr, and rotated logs)
+    /// associated with the process.
+    ///
+    /// # Arguments
+    /// * `process_id` - Process ID
+    /// * `process_name` - Process name
+    ///
+    /// # Returns
+    /// * `Ok(())` - Successfully deleted log files
+    /// * `Err(AdasaError)` - Failed to delete log files
+    pub async fn delete_logs(&mut self, process_id: u64, process_name: &str) -> Result<()> {
+        // Remove the logger first (this closes file handles)
+        let _ = self.remove_logger(process_id);
+
+        // Build log file patterns
+        let stdout_pattern = format!("{}-{}-out", process_name, process_id);
+        let stderr_pattern = format!("{}-{}-err", process_name, process_id);
+
+        // Find and delete all matching log files (including rotated ones)
+        let mut deleted_count = 0;
+        let entries = tokio::fs::read_dir(&self.log_dir).await.map_err(|e| {
+            AdasaError::LogError(format!("Failed to read log directory: {}", e))
+        })?;
+
+        let mut entries = entries;
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            AdasaError::LogError(format!("Failed to read directory entry: {}", e))
+        })? {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+
+            // Check if this file belongs to the process
+            if file_name_str.starts_with(&stdout_pattern) || file_name_str.starts_with(&stderr_pattern) {
+                if let Err(e) = tokio::fs::remove_file(entry.path()).await {
+                    tracing::warn!("Failed to delete log file {}: {}", file_name_str, e);
+                } else {
+                    deleted_count += 1;
+                    tracing::debug!("Deleted log file: {}", file_name_str);
+                }
+            }
+        }
+
+        tracing::info!(
+            "Deleted {} log files for process {} (ID: {})",
+            deleted_count,
+            process_name,
+            process_id
+        );
+
+        Ok(())
+    }
+
     /// Get the log directory path
     pub fn log_dir(&self) -> &Path {
         &self.log_dir
@@ -522,5 +576,66 @@ mod tests {
 
         // Cleanup
         let _ = child.wait().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_logs() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_dir = temp_dir.path();
+
+        let mut manager = LogManager::new(log_dir).await.unwrap();
+        manager.create_logger(1, "test-process").await.unwrap();
+
+        // Write some data
+        manager.write_stdout(1, b"Test stdout").await.unwrap();
+        manager.write_stderr(1, b"Test stderr").await.unwrap();
+        manager.flush_all().await.unwrap();
+
+        // Verify log files exist
+        let stdout_path = log_dir.join("test-process-1-out.log");
+        let stderr_path = log_dir.join("test-process-1-err.log");
+        assert!(stdout_path.exists());
+        assert!(stderr_path.exists());
+
+        // Delete logs
+        let result = manager.delete_logs(1, "test-process").await;
+        assert!(result.is_ok());
+
+        // Verify log files are deleted
+        assert!(!stdout_path.exists());
+        assert!(!stderr_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_delete_logs_with_rotated_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_dir = temp_dir.path();
+
+        let mut manager = LogManager::new(log_dir).await.unwrap();
+        manager.create_logger(1, "test-process").await.unwrap();
+
+        // Create some fake rotated log files
+        tokio::fs::write(log_dir.join("test-process-1-out.log"), b"current")
+            .await
+            .unwrap();
+        tokio::fs::write(log_dir.join("test-process-1-out-20240101.log"), b"rotated1")
+            .await
+            .unwrap();
+        tokio::fs::write(log_dir.join("test-process-1-err.log"), b"current")
+            .await
+            .unwrap();
+        tokio::fs::write(log_dir.join("test-process-1-err-20240101.log"), b"rotated1")
+            .await
+            .unwrap();
+
+        // Delete logs
+        let result = manager.delete_logs(1, "test-process").await;
+        assert!(result.is_ok());
+
+        // Verify all log files are deleted
+        assert!(!log_dir.join("test-process-1-out.log").exists());
+        assert!(!log_dir.join("test-process-1-out-20240101.log").exists());
+        assert!(!log_dir.join("test-process-1-err.log").exists());
+        assert!(!log_dir.join("test-process-1-err-20240101.log").exists());
     }
 }

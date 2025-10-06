@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// Default socket path for daemon communication
@@ -18,10 +19,12 @@ const MAX_RETRY_ATTEMPTS: u32 = 3;
 /// Delay between retry attempts
 const RETRY_DELAY: Duration = Duration::from_millis(100);
 
-/// IPC client for communicating with the daemon
+/// IPC client for communicating with the daemon (with connection pooling)
 pub struct IpcClient {
     socket_path: PathBuf,
     request_id: AtomicU64,
+    /// Cached connection for reuse (reduces connection overhead)
+    cached_connection: Mutex<Option<UnixStream>>,
 }
 
 impl IpcClient {
@@ -35,10 +38,11 @@ impl IpcClient {
         Self {
             socket_path: path.as_ref().to_path_buf(),
             request_id: AtomicU64::new(1),
+            cached_connection: Mutex::new(None),
         }
     }
 
-    /// Send a command to the daemon and wait for a response
+    /// Send a command to the daemon and wait for a response (optimized with connection reuse)
     pub fn send_command(&self, command: Command) -> Result<Response> {
         let request_id = self.request_id.fetch_add(1, Ordering::SeqCst);
         let request = Request::new(request_id, command);
@@ -46,7 +50,7 @@ impl IpcClient {
         // Try to send the command with retry logic
         let mut last_error = None;
         for attempt in 1..=MAX_RETRY_ATTEMPTS {
-            match self.try_send_request(&request) {
+            match self.try_send_request_with_pooling(&request) {
                 Ok(response) => {
                     // Verify response ID matches request ID
                     if response.id != request_id {
@@ -59,6 +63,10 @@ impl IpcClient {
                 }
                 Err(e) => {
                     last_error = Some(e);
+                    // Clear cached connection on error
+                    if let Ok(mut cache) = self.cached_connection.lock() {
+                        *cache = None;
+                    }
                     if attempt < MAX_RETRY_ATTEMPTS {
                         std::thread::sleep(RETRY_DELAY);
                     }
@@ -72,12 +80,39 @@ impl IpcClient {
         }))
     }
 
-    /// Attempt to send a request to the daemon (single attempt)
-    fn try_send_request(&self, request: &Request) -> Result<Response> {
-        // Connect to the Unix socket
-        let mut stream = self.connect()?;
+    /// Try to send request using connection pooling for better performance
+    fn try_send_request_with_pooling(&self, request: &Request) -> Result<Response> {
+        // Try to reuse cached connection first
+        let mut cache = self.cached_connection.lock()
+            .map_err(|_| AdasaError::Other("Lock poisoned".to_string()))?;
+        
+        // Try cached connection if available
+        if let Some(stream) = cache.take() {
+            match self.send_on_stream(stream, request) {
+                Ok((response, stream)) => {
+                    // Connection still good, cache it for next use
+                    *cache = Some(stream);
+                    return Ok(response);
+                }
+                Err(_) => {
+                    // Connection failed, will create new one
+                }
+            }
+        }
 
-        // Serialize and send the request
+        // No cached connection or it failed, create new one
+        let stream = self.connect()?;
+        let (response, stream) = self.send_on_stream(stream, request)?;
+        
+        // Cache the connection for reuse
+        *cache = Some(stream);
+        
+        Ok(response)
+    }
+
+    /// Send request on an existing stream and return both response and stream
+    fn send_on_stream(&self, mut stream: UnixStream, request: &Request) -> Result<(Response, UnixStream)> {
+        // Serialize request (reuse buffer)
         let request_json = serde_json::to_string(request).map_err(|e| {
             AdasaError::SerializationError(format!("Failed to serialize request: {}", e))
         })?;
@@ -92,8 +127,8 @@ impl IpcClient {
             .map_err(|e| AdasaError::IpcError(format!("Failed to flush stream: {}", e)))?;
 
         // Read the response
-        let mut reader = BufReader::new(stream);
-        let mut response_line = String::new();
+        let mut reader = BufReader::new(&stream);
+        let mut response_line = String::with_capacity(512); // Pre-allocate
         reader
             .read_line(&mut response_line)
             .map_err(|e| AdasaError::IpcError(format!("Failed to read response: {}", e)))?;
@@ -103,8 +138,10 @@ impl IpcClient {
             AdasaError::DeserializationError(format!("Failed to deserialize response: {}", e))
         })?;
 
-        Ok(response)
+        Ok((response, stream))
     }
+
+
 
     /// Establish a connection to the daemon's Unix socket
     fn connect(&self) -> Result<UnixStream> {
